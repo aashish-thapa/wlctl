@@ -63,7 +63,7 @@ Error: {}",
 
         let adapter = match Adapter::new(
             client.clone(),
-            device.name.clone(), // Use device interface name as path placeholder
+            device.device_path.clone(),
             config.clone(),
         )
         .await
