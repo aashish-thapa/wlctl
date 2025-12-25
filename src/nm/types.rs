@@ -309,3 +309,137 @@ pub struct DiagnosticInfo {
     pub rx_bitrate: Option<u32>,
     pub security: Option<String>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_mode_from_str() {
+        assert_eq!(Mode::try_from("station").unwrap(), Mode::Station);
+        assert_eq!(Mode::try_from("Station").unwrap(), Mode::Station);
+        assert_eq!(Mode::try_from("ap").unwrap(), Mode::Ap);
+        assert_eq!(Mode::try_from("AP").unwrap(), Mode::Ap);
+        assert!(Mode::try_from("invalid").is_err());
+    }
+
+    #[test]
+    fn test_mode_display() {
+        assert_eq!(Mode::Station.to_string(), "station");
+        assert_eq!(Mode::Ap.to_string(), "ap");
+    }
+
+    #[test]
+    fn test_device_state_from_u32() {
+        assert_eq!(DeviceState::from(0), DeviceState::Unknown);
+        assert_eq!(DeviceState::from(30), DeviceState::Disconnected);
+        assert_eq!(DeviceState::from(100), DeviceState::Activated);
+        assert_eq!(DeviceState::from(120), DeviceState::Failed);
+        assert_eq!(DeviceState::from(999), DeviceState::Unknown);
+    }
+
+    #[test]
+    fn test_security_type_from_flags() {
+        // Open network
+        assert_eq!(SecurityType::from_flags(0, 0, 0), SecurityType::Open);
+
+        // WEP (privacy flag set, no WPA/RSN)
+        assert_eq!(SecurityType::from_flags(0x1, 0, 0), SecurityType::WEP);
+
+        // WPA
+        assert_eq!(SecurityType::from_flags(0, 0x1, 0), SecurityType::WPA);
+
+        // WPA2
+        assert_eq!(SecurityType::from_flags(0, 0, 0x1), SecurityType::WPA2);
+
+        // WPA3
+        assert_eq!(SecurityType::from_flags(0, 0, 0x400), SecurityType::WPA3);
+
+        // Enterprise
+        assert_eq!(SecurityType::from_flags(0, 0x200, 0), SecurityType::Enterprise);
+        assert_eq!(SecurityType::from_flags(0, 0, 0x200), SecurityType::Enterprise);
+    }
+
+    #[test]
+    fn test_security_type_requires_password() {
+        assert!(!SecurityType::Open.requires_password());
+        assert!(SecurityType::WEP.requires_password());
+        assert!(SecurityType::WPA.requires_password());
+        assert!(SecurityType::WPA2.requires_password());
+        assert!(SecurityType::WPA3.requires_password());
+        assert!(SecurityType::Enterprise.requires_password());
+    }
+
+    #[test]
+    fn test_security_type_is_enterprise() {
+        assert!(!SecurityType::Open.is_enterprise());
+        assert!(!SecurityType::WPA2.is_enterprise());
+        assert!(SecurityType::Enterprise.is_enterprise());
+    }
+
+    #[test]
+    fn test_access_point_band() {
+        let ap_2g = AccessPointInfo {
+            path: String::new(),
+            ssid: "Test".to_string(),
+            strength: 80,
+            frequency: 2412,
+            hw_address: String::new(),
+            security: SecurityType::Open,
+            mode: WifiMode::Infrastructure,
+        };
+        assert_eq!(ap_2g.band(), "2.4 GHz");
+
+        let ap_5g = AccessPointInfo {
+            path: String::new(),
+            ssid: "Test".to_string(),
+            strength: 80,
+            frequency: 5180,
+            hw_address: String::new(),
+            security: SecurityType::Open,
+            mode: WifiMode::Infrastructure,
+        };
+        assert_eq!(ap_5g.band(), "5 GHz");
+    }
+
+    #[test]
+    fn test_access_point_channel() {
+        let ap = AccessPointInfo {
+            path: String::new(),
+            ssid: "Test".to_string(),
+            strength: 80,
+            frequency: 2412,
+            hw_address: String::new(),
+            security: SecurityType::Open,
+            mode: WifiMode::Infrastructure,
+        };
+        assert_eq!(ap.channel(), 1);
+    }
+
+    #[test]
+    fn test_station_state_from_device_state() {
+        assert_eq!(StationState::from(DeviceState::Activated), StationState::Connected);
+        assert_eq!(StationState::from(DeviceState::Prepare), StationState::Connecting);
+        assert_eq!(StationState::from(DeviceState::Deactivating), StationState::Disconnecting);
+        assert_eq!(StationState::from(DeviceState::Disconnected), StationState::Disconnected);
+    }
+
+    #[test]
+    fn test_wifi_mode_from_u32() {
+        assert_eq!(WifiMode::from(0), WifiMode::Unknown);
+        assert_eq!(WifiMode::from(1), WifiMode::Adhoc);
+        assert_eq!(WifiMode::from(2), WifiMode::Infrastructure);
+        assert_eq!(WifiMode::from(3), WifiMode::Ap);
+        assert_eq!(WifiMode::from(4), WifiMode::Mesh);
+        assert_eq!(WifiMode::from(99), WifiMode::Unknown);
+    }
+
+    #[test]
+    fn test_active_connection_state_from_u32() {
+        assert_eq!(ActiveConnectionState::from(0), ActiveConnectionState::Unknown);
+        assert_eq!(ActiveConnectionState::from(1), ActiveConnectionState::Activating);
+        assert_eq!(ActiveConnectionState::from(2), ActiveConnectionState::Activated);
+        assert_eq!(ActiveConnectionState::from(3), ActiveConnectionState::Deactivating);
+        assert_eq!(ActiveConnectionState::from(4), ActiveConnectionState::Deactivated);
+    }
+}

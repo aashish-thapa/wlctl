@@ -25,16 +25,14 @@ jobs:
       - name: Build for x86_64
         run: |
           CROSS_CONTAINER_ENGINE=podman cross build --target=x86_64-unknown-linux-musl --release
-          cp target/x86_64-unknown-linux-musl/release/impala impala-x86_64-unknown-linux-musl
+          cp target/x86_64-unknown-linux-musl/release/impala-nm impala-nm-x86_64-unknown-linux-musl
 
       - name: Build for arm64
         run: |
           CROSS_CONTAINER_ENGINE=podman cross build --target=aarch64-unknown-linux-musl --release
-          cp target/aarch64-unknown-linux-musl/release/impala impala-aarch64-unknown-linux-musl
+          cp target/aarch64-unknown-linux-musl/release/impala-nm impala-nm-aarch64-unknown-linux-musl
 
       - name: Upload Binary
         uses: softprops/action-gh-release@v2
         with:
-          files: "impala*"
-          body: |
-            [Release.md](${{ github.server_url }}/${{ github.repository }}/blob/main/Release.md)
+          files: "impala-nm*"
