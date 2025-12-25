@@ -12,7 +12,7 @@ use ratatui::{
 
 use tui_input::{Input, backend::crossterm::EventHandler};
 
-use crate::{iwd_network_name, mode::station::auth::entreprise::ERROR_PADDING};
+use crate::mode::station::auth::entreprise::ERROR_PADDING;
 
 fn pad_string(input: &str, length: usize) -> String {
     let current_length = input.chars().count();
@@ -165,45 +165,63 @@ impl TLS {
 
     pub fn apply(&mut self, network_name: &str) -> Result<()> {
         self.validate()?;
-        let network_name = iwd_network_name(network_name);
+
+        // NetworkManager stores 802.1x configuration in connection profiles
+        let nm_path = format!(
+            "/etc/NetworkManager/system-connections/{}.nmconnection",
+            network_name
+        );
+
         let mut file = OpenOptions::new()
             .write(true)
             .read(true)
             .create(true)
             .truncate(true)
-            .open(format!("/var/lib/iwd/{}.8021x", network_name))?;
+            .open(&nm_path)?;
+
         let mut text = format!(
-            "
-[Security]
-EAP-Method=TLS
-EAP-TLS-CACert={}
-EAP-Identity={}
-EAP-TLS-ClientCert={}
-EAP-TLS-ClientKey={}
+            "[connection]
+id={}
+type=wifi
+
+[wifi]
+ssid={}
+
+[wifi-security]
+key-mgmt=wpa-eap
+
+[802-1x]
+eap=tls
+identity={}
+ca-cert={}
+client-cert={}
+private-key={}
 ",
-            self.ca_cert.field.value(),
+            network_name,
+            network_name,
             self.identity.field.value(),
+            self.ca_cert.field.value(),
             self.client_cert.field.value(),
             self.client_key.field.value(),
         );
 
         if !self.key_passphrase.field.value().is_empty() {
-            text.push_str(
-                format!(
-                    "EAP-TLS-ClientKeyPassphrase={}",
-                    self.key_passphrase.field.value()
-                )
-                .as_str(),
-            );
+            text.push_str(&format!(
+                "private-key-password={}\n",
+                self.key_passphrase.field.value()
+            ));
         }
 
         text.push_str(
             "
+[ipv4]
+method=auto
 
-[Settings]
-AutoConnect=true",
+[ipv6]
+method=auto
+",
         );
-        let text = text.trim_start();
+
         file.write_all(text.as_bytes())?;
 
         Ok(())
