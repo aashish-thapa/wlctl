@@ -6,8 +6,8 @@ license = "GPL-3.0"
 edition = "2024"
 description = "TUI for managing WiFi using NetworkManager"
 readme = "Readme.md"
-homepage = "https://github.com/aashish-thapa/impalawithnm"
-repository = "https://github.com/aashish-thapa/impalawithnm"
+homepage = "https://github.com/aashish-thapa/wlctl"
+repository = "https://github.com/aashish-thapa/wlctl"
 keywords = ["wifi", "networkmanager", "tui", "linux", "wireless"]
 categories = ["command-line-utilities"]
 
