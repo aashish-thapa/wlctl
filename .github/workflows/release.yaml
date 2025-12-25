@@ -2,6 +2,8 @@
 name: Release
 on:
   push:
+    branches:
+      - main
     tags:
       - "v[0-9]+.[0-9]+.[0-9]+"
 
@@ -9,8 +11,41 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # Only run if this is a tag push on main
+  check:
+    name: Check Release Conditions
+    runs-on: ubuntu-latest
+    outputs:
+      should_release: ${{ steps.check.outputs.should_release }}
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check if tag is on main
+        id: check
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            TAG="${{ github.ref_name }}"
+            # Check if tag commit is on main
+            if git branch -r --contains $(git rev-list -n 1 $TAG) | grep -q 'origin/main'; then
+              echo "should_release=true" >> $GITHUB_OUTPUT
+              echo "version=${TAG#v}" >> $GITHUB_OUTPUT
+            else
+              echo "Tag $TAG is not on main branch, skipping release"
+              echo "should_release=false" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "Not a tag push, skipping release"
+            echo "should_release=false" >> $GITHUB_OUTPUT
+          fi
+
   build:
     name: Build - ${{ matrix.target }}
+    needs: check
+    if: needs.check.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -50,7 +85,8 @@ jobs:
 
   release:
     name: Create Release
-    needs: build
+    needs: [check, build]
+    if: needs.check.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -80,7 +116,8 @@ jobs:
 
   publish:
     name: Publish to crates.io
-    needs: release
+    needs: [check, release]
+    if: needs.check.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -89,5 +126,17 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Check if version exists on crates.io
+        id: check_version
+        run: |
+          VERSION="${{ needs.check.outputs.version }}"
+          if cargo search wlctl --limit 1 | grep -q "wlctl = \"$VERSION\""; then
+            echo "Version $VERSION already published"
+            echo "skip=true" >> $GITHUB_OUTPUT
+          else
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Publish
+        if: steps.check_version.outputs.skip != 'true'
         run: cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
