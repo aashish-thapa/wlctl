@@ -26,12 +26,9 @@ pub mod reset;
 
 pub mod agent;
 
-pub fn iwd_network_name(name: &str) -> String {
-    match name
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == ' ')
-    {
-        true => name.to_string(),
-        false => format!("={}", hex::encode(name)),
-    }
+pub mod nm;
+
+pub fn nm_network_name(name: &str) -> String {
+    // NetworkManager handles SSID encoding internally, so we just return as-is
+    name.to_string()
 }
