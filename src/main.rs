@@ -8,11 +8,11 @@ use impala::{
     config::Config,
     event::{Event, EventHandler},
     handler::{handle_key_events, toggle_connect},
+    nm::Mode,
     notification::{Notification, NotificationLevel},
     rfkill,
     tui::Tui,
 };
-use iwdrs::modes::Mode;
 use ratatui::{Terminal, backend::CrosstermBackend};
 use std::sync::Arc;
 use std::{io, process::exit};
