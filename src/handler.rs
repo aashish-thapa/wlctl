@@ -32,7 +32,8 @@ pub async fn toggle_connect(app: &mut App, sender: UnboundedSender<Event>) -> Re
                         if net.requires_password() {
                             // Request password from user
                             app.network_name_requiring_auth = Some(net.name.clone());
-                            app.agent.request_passphrase(net.name.clone())?;
+                            app.network_pending_auth = Some(net);
+                            app.agent.request_passphrase(app.network_name_requiring_auth.clone().unwrap())?;
                             app.focused_block = FocusedBlock::PskAuthKey;
                             return Ok(());
                         }
@@ -240,12 +241,26 @@ pub async fn handle_key_events(
                 match app.focused_block {
                     FocusedBlock::PskAuthKey => match key_event.code {
                         KeyCode::Enter => {
+                            // Get the password before submit() resets it
+                            let password: String = app.auth.psk.passphrase.value().into();
                             app.auth.psk.submit(&app.agent).await?;
+
+                            // Connect to the pending network with the password
+                            if let Some(net) = app.network_pending_auth.take() {
+                                let sender_clone = sender.clone();
+                                tokio::spawn(async move {
+                                    let _ = net.connect(sender_clone, Some(&password)).await;
+                                });
+                            }
+
+                            app.network_name_requiring_auth = None;
                             app.focused_block = FocusedBlock::NewNetworks;
                         }
 
                         KeyCode::Esc => {
                             app.auth.psk.cancel(&app.agent).await?;
+                            app.network_pending_auth = None;
+                            app.network_name_requiring_auth = None;
                             app.focused_block = FocusedBlock::NewNetworks;
                         }
 
