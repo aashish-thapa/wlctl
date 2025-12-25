@@ -822,8 +822,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "impala"
-version = "0.6.0"
+name = "impala-nm"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-channel",
