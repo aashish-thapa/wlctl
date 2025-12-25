@@ -1,6 +1,9 @@
 use anyhow::Result;
 use anyhow::anyhow;
 use env_logger::Target;
+use ratatui::{Terminal, backend::CrosstermBackend};
+use std::sync::Arc;
+use std::{io, process::exit};
 use wlctl::{
     app::App,
     cli,
@@ -12,9 +15,6 @@ use wlctl::{
     rfkill,
     tui::Tui,
 };
-use ratatui::{Terminal, backend::CrosstermBackend};
-use std::sync::Arc;
-use std::{io, process::exit};
 
 #[tokio::main]
 async fn main() -> Result<()> {
