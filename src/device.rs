@@ -2,7 +2,7 @@ use anyhow::Context;
 use anyhow::Result;
 use std::sync::Arc;
 
-use iwdrs::{device::Device as iwdDevice, modes::Mode, session::Session};
+use crate::nm::{Mode, NMClient};
 
 use ratatui::{
     Frame,
@@ -20,8 +20,8 @@ use crate::{
 
 #[derive(Clone)]
 pub struct Device {
-    device: iwdDevice,
-    session: Arc<Session>,
+    client: Arc<NMClient>,
+    device_path: String,
     pub name: String,
     pub address: String,
     pub mode: Mode,
@@ -31,33 +31,47 @@ pub struct Device {
 }
 
 impl Device {
-    pub async fn new(session: Arc<Session>) -> Result<Self> {
-        let device = session.devices().await?.pop().context("No device found")?;
-        let name = device.name().await?;
-        let address = device.address().await?;
-        let mode = device.get_mode().await?;
-        let is_powered = device.is_powered().await?;
+    pub async fn new(client: Arc<NMClient>) -> Result<Self> {
+        let device_path = client
+            .get_wifi_device()
+            .await
+            .context("No WiFi device found")?;
+        let device_path_str = device_path.as_str().to_string();
 
-        let (station, ap) = match mode {
-            Mode::Station => {
-                if let Ok(station) = Station::new(session.clone()).await {
-                    (Some(station), None)
-                } else {
-                    (None, None)
+        let name = client.get_device_interface(&device_path_str).await?;
+        let address = client.get_device_hw_address(&device_path_str).await?;
+        let is_powered = client.is_wireless_enabled().await?;
+
+        // Default to Station mode - NetworkManager doesn't have explicit mode switching
+        // The mode is determined by the active connection type
+        let mode = Mode::Station;
+
+        let (station, ap) = if is_powered {
+            match mode {
+                Mode::Station => {
+                    if let Ok(station) = Station::new(client.clone(), device_path_str.clone()).await
+                    {
+                        (Some(station), None)
+                    } else {
+                        (None, None)
+                    }
+                }
+                Mode::Ap => {
+                    if let Ok(ap) = AccessPoint::new(client.clone(), device_path_str.clone()).await
+                    {
+                        (None, Some(ap))
+                    } else {
+                        (None, None)
+                    }
                 }
             }
-            Mode::Ap => {
-                if let Ok(ap) = AccessPoint::new(session.clone()).await {
-                    (None, Some(ap))
-                } else {
-                    (None, None)
-                }
-            }
+        } else {
+            (None, None)
         };
 
         Ok(Self {
-            device,
-            session,
+            client,
+            device_path: device_path_str,
             name,
             address,
             mode,
@@ -67,38 +81,63 @@ impl Device {
         })
     }
 
-    pub async fn set_mode(&self, mode: Mode) -> Result<()> {
-        self.device.set_mode(mode).await?;
+    pub async fn set_mode(&mut self, mode: Mode) -> Result<()> {
+        // In NetworkManager, we don't switch modes explicitly
+        // Instead, we activate different connection types
+        // For AP mode, we'll create a hotspot connection
+        // For station mode, we connect to infrastructure networks
+        self.mode = mode;
+
+        // Reinitialize station or AP based on mode
+        match mode {
+            Mode::Station => {
+                self.ap = None;
+                if self.is_powered {
+                    self.station =
+                        Station::new(self.client.clone(), self.device_path.clone()).await.ok();
+                }
+            }
+            Mode::Ap => {
+                self.station = None;
+                if self.is_powered {
+                    self.ap =
+                        AccessPoint::new(self.client.clone(), self.device_path.clone()).await.ok();
+                }
+            }
+        }
+
         Ok(())
     }
 
     pub async fn power_off(&self) -> Result<()> {
-        self.device.set_power(false).await?;
+        self.client.set_wireless_enabled(false).await?;
         Ok(())
     }
 
     pub async fn power_on(&self) -> Result<()> {
-        self.device.set_power(true).await?;
+        self.client.set_wireless_enabled(true).await?;
         Ok(())
     }
 
     pub async fn refresh(&mut self) -> Result<()> {
-        self.is_powered = self.device.is_powered().await?;
-        self.mode = self.device.get_mode().await?;
+        self.is_powered = self.client.is_wireless_enabled().await?;
+
         if self.is_powered {
             match self.mode {
                 Mode::Station => {
                     if let Some(station) = &mut self.station {
                         station.refresh().await?;
                     } else {
-                        self.station = Station::new(self.session.clone()).await.ok();
+                        self.station =
+                            Station::new(self.client.clone(), self.device_path.clone()).await.ok();
                     }
                 }
                 Mode::Ap => {
                     if let Some(ap) = &mut self.ap {
                         ap.refresh().await?;
                     } else {
-                        self.ap = AccessPoint::new(self.session.clone()).await.ok();
+                        self.ap =
+                            AccessPoint::new(self.client.clone(), self.device_path.clone()).await.ok();
                     }
                 }
             }
