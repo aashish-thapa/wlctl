@@ -179,26 +179,45 @@ impl TTLS {
 
     pub fn get_ca_cert(&self) -> Option<String> {
         let val = self.ca_cert.field.value();
-        if val.is_empty() { None } else { Some(val.to_string()) }
+        if val.is_empty() {
+            None
+        } else {
+            Some(val.to_string())
+        }
     }
 
     pub fn get_client_cert(&self) -> Option<String> {
         let val = self.client_cert.field.value();
-        if val.is_empty() { None } else { Some(val.to_string()) }
+        if val.is_empty() {
+            None
+        } else {
+            Some(val.to_string())
+        }
     }
 
     pub fn get_client_key(&self) -> Option<String> {
         let val = self.client_key.field.value();
-        if val.is_empty() { None } else { Some(val.to_string()) }
+        if val.is_empty() {
+            None
+        } else {
+            Some(val.to_string())
+        }
     }
 
     pub fn get_key_passphrase(&self) -> Option<String> {
         let val = self.key_passphrase.field.value();
-        if val.is_empty() { None } else { Some(val.to_string()) }
+        if val.is_empty() {
+            None
+        } else {
+            Some(val.to_string())
+        }
     }
 
     pub fn get_phase2_method(&self) -> String {
-        self.phase2_method.to_string().to_lowercase().replace("tunneled", "")
+        self.phase2_method
+            .to_string()
+            .to_lowercase()
+            .replace("tunneled", "")
     }
 
     pub fn get_phase2_password(&self) -> String {
@@ -241,7 +260,10 @@ password={}
             network_name,
             network_name,
             self.identity.field.value(),
-            self.phase2_method.to_string().to_lowercase().replace("tunneled", ""),
+            self.phase2_method
+                .to_string()
+                .to_lowercase()
+                .replace("tunneled", ""),
             self.phase2_password.value()
         );
 
@@ -250,17 +272,11 @@ password={}
         }
 
         if !self.client_cert.is_empty() {
-            text.push_str(&format!(
-                "client-cert={}\n",
-                self.client_cert.field.value()
-            ));
+            text.push_str(&format!("client-cert={}\n", self.client_cert.field.value()));
         }
 
         if !self.client_key.is_empty() {
-            text.push_str(&format!(
-                "private-key={}\n",
-                self.client_key.field.value()
-            ));
+            text.push_str(&format!("private-key={}\n", self.client_key.field.value()));
         }
 
         if !self.key_passphrase.is_empty() {

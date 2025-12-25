@@ -6,7 +6,7 @@ pub mod share;
 
 use std::sync::Arc;
 
-use crate::nm::{AccessPointInfo, DiagnosticInfo, NMClient, StationState};
+use crate::nm::{DiagnosticInfo, NMClient, StationState};
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Flex, Layout},
@@ -168,7 +168,11 @@ impl Station {
         })
     }
 
-    pub async fn connect_hidden_network(&self, ssid: String, password: Option<&str>) -> Result<()> {
+    pub async fn connect_hidden_network(
+        &self,
+        _ssid: String,
+        _password: Option<&str>,
+    ) -> Result<()> {
         // For hidden networks, we need to create a connection with the hidden flag
         // This is handled by add_and_activate_connection with special settings
         // For now, we'll return an error - full hidden network support needs more work
@@ -177,6 +181,7 @@ impl Station {
         ))
     }
 
+    #[allow(clippy::collapsible_if)]
     pub async fn refresh(&mut self) -> Result<()> {
         let device_state = self.client.get_device_state(&self.device_path).await?;
         self.state = StationState::from(device_state);
@@ -285,7 +290,11 @@ impl Station {
 
         // Update diagnostic info
         if self.connected_network.is_some() {
-            if let Some(ap_path) = self.client.get_active_access_point(&self.device_path).await? {
+            if let Some(ap_path) = self
+                .client
+                .get_active_access_point(&self.device_path)
+                .await?
+            {
                 if let Ok(ap_info) = self.client.get_access_point_info(ap_path.as_str()).await {
                     self.diagnostic = Some(DiagnosticInfo {
                         frequency: Some(ap_info.frequency),
@@ -493,16 +502,7 @@ impl Station {
             .iter()
             .map(|(net, signal)| {
                 let known = net.known_network.as_ref().unwrap();
-                let signal_percent = {
-                    let s = *signal / 100;
-                    if s >= 100 {
-                        100
-                    } else if s <= 0 {
-                        0
-                    } else {
-                        s
-                    }
-                };
+                let signal_percent = (*signal / 100).clamp(0, 100);
                 let signal_str = format!("{}%", signal_percent);
 
                 if let Some(connected_net) = &self.connected_network {
@@ -642,16 +642,7 @@ impl Station {
             .new_networks
             .iter()
             .map(|(net, signal)| {
-                let signal_percent = {
-                    let s = *signal / 100;
-                    if s >= 100 {
-                        100
-                    } else if s <= 0 {
-                        0
-                    } else {
-                        s
-                    }
-                };
+                let signal_percent = (*signal / 100).clamp(0, 100);
                 Row::new(vec![
                     Line::from(net.name.clone()).centered(),
                     Line::from(net.network_type.to_string()).centered(),
@@ -670,16 +661,7 @@ impl Station {
 
         if self.show_hidden_networks {
             self.new_hidden_networks.iter().for_each(|net| {
-                let signal_percent = {
-                    let s = net.signal_strength / 100;
-                    if s >= 100 {
-                        100
-                    } else if s <= 0 {
-                        0
-                    } else {
-                        s
-                    }
-                };
+                let signal_percent = (net.signal_strength / 100).clamp(0, 100);
                 rows.push(
                     Row::new(vec![
                         Line::from(net.address.clone()).centered(),

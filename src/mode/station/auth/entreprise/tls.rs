@@ -181,7 +181,11 @@ impl TLS {
 
     pub fn get_key_passphrase(&self) -> Option<String> {
         let val = self.key_passphrase.field.value();
-        if val.is_empty() { None } else { Some(val.to_string()) }
+        if val.is_empty() {
+            None
+        } else {
+            Some(val.to_string())
+        }
     }
 
     pub fn apply(&mut self, network_name: &str) -> Result<()> {

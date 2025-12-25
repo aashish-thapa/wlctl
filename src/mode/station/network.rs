@@ -42,7 +42,11 @@ impl Network {
         }
     }
 
-    pub async fn connect(&self, sender: UnboundedSender<Event>, password: Option<&str>) -> Result<()> {
+    pub async fn connect(
+        &self,
+        sender: UnboundedSender<Event>,
+        password: Option<&str>,
+    ) -> Result<()> {
         // Check if we have a saved connection for this network
         if let Some(known) = &self.known_network {
             // Use existing connection profile

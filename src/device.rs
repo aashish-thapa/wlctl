@@ -93,15 +93,17 @@ impl Device {
             Mode::Station => {
                 self.ap = None;
                 if self.is_powered {
-                    self.station =
-                        Station::new(self.client.clone(), self.device_path.clone()).await.ok();
+                    self.station = Station::new(self.client.clone(), self.device_path.clone())
+                        .await
+                        .ok();
                 }
             }
             Mode::Ap => {
                 self.station = None;
                 if self.is_powered {
-                    self.ap =
-                        AccessPoint::new(self.client.clone(), self.device_path.clone()).await.ok();
+                    self.ap = AccessPoint::new(self.client.clone(), self.device_path.clone())
+                        .await
+                        .ok();
                 }
             }
         }
@@ -128,16 +130,18 @@ impl Device {
                     if let Some(station) = &mut self.station {
                         station.refresh().await?;
                     } else {
-                        self.station =
-                            Station::new(self.client.clone(), self.device_path.clone()).await.ok();
+                        self.station = Station::new(self.client.clone(), self.device_path.clone())
+                            .await
+                            .ok();
                     }
                 }
                 Mode::Ap => {
                     if let Some(ap) = &mut self.ap {
                         ap.refresh().await?;
                     } else {
-                        self.ap =
-                            AccessPoint::new(self.client.clone(), self.device_path.clone()).await.ok();
+                        self.ap = AccessPoint::new(self.client.clone(), self.device_path.clone())
+                            .await
+                            .ok();
                     }
                 }
             }

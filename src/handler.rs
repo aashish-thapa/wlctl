@@ -33,7 +33,9 @@ pub async fn toggle_connect(app: &mut App, sender: UnboundedSender<Event>) -> Re
                             // Request password from user
                             app.network_name_requiring_auth = Some(net.name.clone());
                             app.network_pending_auth = Some(net);
-                            app.agent.request_passphrase(app.network_name_requiring_auth.clone().unwrap())?;
+                            app.agent.request_passphrase(
+                                app.network_name_requiring_auth.clone().unwrap(),
+                            )?;
                             app.focused_block = FocusedBlock::PskAuthKey;
                             return Ok(());
                         }
@@ -458,9 +460,13 @@ pub async fn handle_key_events(
                                                     let network =
                                                         &station.unavailable_known_networks[index];
                                                     // Check if it's a PSK network (WPA/WPA2/WPA3)
-                                                    if matches!(network.network_type, SecurityType::WPA | SecurityType::WPA2 | SecurityType::WPA3)
-                                                        && let Ok(share) =
-                                                            Share::new(network.name.clone())
+                                                    if matches!(
+                                                        network.network_type,
+                                                        SecurityType::WPA
+                                                            | SecurityType::WPA2
+                                                            | SecurityType::WPA3
+                                                    ) && let Ok(share) =
+                                                        Share::new(network.name.clone())
                                                     {
                                                         station.share = Some(share);
                                                         app.focused_block =
@@ -470,9 +476,13 @@ pub async fn handle_key_events(
                                                     let (network, _) =
                                                         &station.known_networks[net_index];
                                                     // Check if it's a PSK network (WPA/WPA2/WPA3)
-                                                    if matches!(network.network_type, SecurityType::WPA | SecurityType::WPA2 | SecurityType::WPA3)
-                                                        && let Ok(share) =
-                                                            Share::new(network.name.clone())
+                                                    if matches!(
+                                                        network.network_type,
+                                                        SecurityType::WPA
+                                                            | SecurityType::WPA2
+                                                            | SecurityType::WPA3
+                                                    ) && let Ok(share) =
+                                                        Share::new(network.name.clone())
                                                     {
                                                         station.share = Some(share);
                                                         app.focused_block =
@@ -517,7 +527,8 @@ pub async fn handle_key_events(
                                                 station.known_networks_state.selected()
                                                 && net_index < station.known_networks.len()
                                             {
-                                                let (net, _) = &mut station.known_networks[net_index];
+                                                let (net, _) =
+                                                    &mut station.known_networks[net_index];
 
                                                 if let Some(known_net) = &mut net.known_network {
                                                     known_net

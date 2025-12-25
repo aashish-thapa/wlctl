@@ -58,9 +58,8 @@ impl Share {
             }
         }
 
-        let passphrase = passphrase.ok_or_else(|| {
-            anyhow::anyhow!("No password found for network {}", network_name)
-        })?;
+        let passphrase = passphrase
+            .ok_or_else(|| anyhow::anyhow!("No password found for network {}", network_name))?;
 
         let message = format!("WIFI:T:WPA;S:{network_name};P:{passphrase};;");
         let qr_code = QrCode::new(message)?;

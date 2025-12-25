@@ -436,33 +436,90 @@ impl WPAEntreprise {
                 FocusedSection::Apply => {
                     if let KeyCode::Enter = key_event.code {
                         // Extract EAP configuration
-                        let (eap_method, identity, password, phase2_auth, ca_cert, client_cert, private_key, key_passphrase) = match &mut self.eap {
+                        let (
+                            eap_method,
+                            identity,
+                            password,
+                            phase2_auth,
+                            ca_cert,
+                            client_cert,
+                            private_key,
+                            key_passphrase,
+                        ) = match &mut self.eap {
                             Eap::TLS(v) => {
-                                if v.validate().is_err() { return; }
-                                ("tls", v.get_identity(), None, None,
-                                 Some(v.get_ca_cert()), Some(v.get_client_cert()),
-                                 Some(v.get_client_key()), v.get_key_passphrase())
+                                if v.validate().is_err() {
+                                    return;
+                                }
+                                (
+                                    "tls",
+                                    v.get_identity(),
+                                    None,
+                                    None,
+                                    Some(v.get_ca_cert()),
+                                    Some(v.get_client_cert()),
+                                    Some(v.get_client_key()),
+                                    v.get_key_passphrase(),
+                                )
                             }
                             Eap::TTLS(v) => {
-                                if v.validate().is_err() { return; }
-                                ("ttls", v.get_identity(), Some(v.get_phase2_password()),
-                                 Some(v.get_phase2_method()), v.get_ca_cert(),
-                                 v.get_client_cert(), v.get_client_key(), v.get_key_passphrase())
+                                if v.validate().is_err() {
+                                    return;
+                                }
+                                (
+                                    "ttls",
+                                    v.get_identity(),
+                                    Some(v.get_phase2_password()),
+                                    Some(v.get_phase2_method()),
+                                    v.get_ca_cert(),
+                                    v.get_client_cert(),
+                                    v.get_client_key(),
+                                    v.get_key_passphrase(),
+                                )
                             }
                             Eap::PEAP(v) => {
-                                if v.validate().is_err() { return; }
-                                ("peap", v.get_identity(), Some(v.get_phase2_password()),
-                                 Some(v.get_phase2_method()), v.get_ca_cert(),
-                                 v.get_client_cert(), v.get_client_key(), v.get_key_passphrase())
+                                if v.validate().is_err() {
+                                    return;
+                                }
+                                (
+                                    "peap",
+                                    v.get_identity(),
+                                    Some(v.get_phase2_password()),
+                                    Some(v.get_phase2_method()),
+                                    v.get_ca_cert(),
+                                    v.get_client_cert(),
+                                    v.get_client_key(),
+                                    v.get_key_passphrase(),
+                                )
                             }
                             Eap::PWD(v) => {
-                                if v.validate().is_err() { return; }
-                                ("pwd", v.get_identity(), Some(v.get_password()), None, None, None, None, None)
+                                if v.validate().is_err() {
+                                    return;
+                                }
+                                (
+                                    "pwd",
+                                    v.get_identity(),
+                                    Some(v.get_password()),
+                                    None,
+                                    None,
+                                    None,
+                                    None,
+                                    None,
+                                )
                             }
                             Eap::Eduroam(v) => {
-                                if v.validate().is_err() { return; }
-                                ("peap", v.get_identity(), Some(v.get_phase2_password()),
-                                 Some("mschapv2".to_string()), None, None, None, None)
+                                if v.validate().is_err() {
+                                    return;
+                                }
+                                (
+                                    "peap",
+                                    v.get_identity(),
+                                    Some(v.get_phase2_password()),
+                                    Some("mschapv2".to_string()),
+                                    None,
+                                    None,
+                                    None,
+                                    None,
+                                )
                             }
                         };
 
@@ -472,17 +529,19 @@ impl WPAEntreprise {
                             let sender = sender.clone();
 
                             tokio::spawn(async move {
-                                let result = client.add_enterprise_connection(
-                                    &network_name,
-                                    eap_method,
-                                    &identity,
-                                    password.as_deref(),
-                                    phase2_auth.as_deref(),
-                                    ca_cert.as_deref(),
-                                    client_cert.as_deref(),
-                                    private_key.as_deref(),
-                                    key_passphrase.as_deref(),
-                                ).await;
+                                let result = client
+                                    .add_enterprise_connection(
+                                        &network_name,
+                                        eap_method,
+                                        &identity,
+                                        password.as_deref(),
+                                        phase2_auth.as_deref(),
+                                        ca_cert.as_deref(),
+                                        client_cert.as_deref(),
+                                        private_key.as_deref(),
+                                        key_passphrase.as_deref(),
+                                    )
+                                    .await;
 
                                 if result.is_ok() {
                                     let _ = sender.send(Event::Tick);

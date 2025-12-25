@@ -87,6 +87,7 @@ impl AccessPoint {
         })
     }
 
+    #[allow(clippy::collapsible_if)]
     async fn check_active_hotspot(
         client: &NMClient,
         device_path: &str,
@@ -477,7 +478,10 @@ impl AccessPoint {
         };
 
         let ap_used_cipher = if self.has_started {
-            self.used_cipher.as_ref().unwrap_or(&"-".to_string()).clone()
+            self.used_cipher
+                .as_ref()
+                .unwrap_or(&"-".to_string())
+                .clone()
         } else {
             "-".to_string()
         };

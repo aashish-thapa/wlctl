@@ -1,7 +1,6 @@
 use anyhow::Result;
 use anyhow::anyhow;
 use env_logger::Target;
-use impala_nm::notification;
 use impala_nm::{
     app::App,
     cli,

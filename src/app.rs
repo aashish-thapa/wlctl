@@ -63,18 +63,13 @@ Error: {}",
 
         let mut device = Device::new(client.clone()).await?;
 
-        let adapter = match Adapter::new(
-            client.clone(),
-            device.device_path.clone(),
-            config.clone(),
-        )
-        .await
-        {
-            Ok(v) => v,
-            Err(e) => {
-                return Err(anyhow!("Can not access the NetworkManager service: {}", e));
-            }
-        };
+        let adapter =
+            match Adapter::new(client.clone(), device.device_path.clone(), config.clone()).await {
+                Ok(v) => v,
+                Err(e) => {
+                    return Err(anyhow!("Can not access the NetworkManager service: {}", e));
+                }
+            };
 
         // Set the initial mode
         device.set_mode(mode).await?;

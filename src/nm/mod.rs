@@ -1,9 +1,8 @@
 // NetworkManager D-Bus abstraction layer
 // Replaces iwdrs with direct NetworkManager D-Bus calls
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result};
 use std::collections::HashMap;
-use std::sync::Arc;
 use zbus::zvariant::{ObjectPath, OwnedObjectPath, OwnedValue, Value};
 use zbus::{Connection, Proxy};
 
@@ -186,7 +185,10 @@ impl NMClient {
     }
 
     /// Get current active access point
-    pub async fn get_active_access_point(&self, device_path: &str) -> Result<Option<OwnedObjectPath>> {
+    pub async fn get_active_access_point(
+        &self,
+        device_path: &str,
+    ) -> Result<Option<OwnedObjectPath>> {
         let proxy = Proxy::new(
             &self.connection,
             NM_BUS_NAME,
@@ -266,6 +268,7 @@ impl NMClient {
     }
 
     /// Get WiFi connection profiles
+    #[allow(clippy::collapsible_if, clippy::map_flatten)]
     pub async fn get_wifi_connections(&self) -> Result<Vec<ConnectionInfo>> {
         let connections = self.get_connections().await?;
         let mut wifi_connections = Vec::new();
@@ -301,31 +304,35 @@ impl NMClient {
                                 .unwrap_or(0);
 
                             // Get SSID from wireless settings
-                            let ssid = if let Some(wireless_settings) = settings.get("802-11-wireless") {
-                                wireless_settings
-                                    .get("ssid")
-                                    .map(|v| {
-                                        v.try_clone().ok().and_then(|v| {
-                                            let bytes: Result<Vec<u8>, _> = v.try_into();
-                                            bytes.ok().map(|b| String::from_utf8_lossy(&b).to_string())
+                            let ssid =
+                                if let Some(wireless_settings) = settings.get("802-11-wireless") {
+                                    wireless_settings
+                                        .get("ssid")
+                                        .map(|v| {
+                                            v.try_clone().ok().and_then(|v| {
+                                                let bytes: Result<Vec<u8>, _> = v.try_into();
+                                                bytes.ok().map(|b| {
+                                                    String::from_utf8_lossy(&b).to_string()
+                                                })
+                                            })
                                         })
-                                    })
-                                    .flatten()
-                                    .unwrap_or(id.clone())
-                            } else {
-                                id.clone()
-                            };
+                                        .flatten()
+                                        .unwrap_or(id.clone())
+                                } else {
+                                    id.clone()
+                                };
 
                             // Check if it's a hidden network
-                            let hidden = if let Some(wireless_settings) = settings.get("802-11-wireless") {
-                                wireless_settings
-                                    .get("hidden")
-                                    .map(|v| v.try_clone().ok().and_then(|v| v.try_into().ok()))
-                                    .flatten()
-                                    .unwrap_or(false)
-                            } else {
-                                false
-                            };
+                            let hidden =
+                                if let Some(wireless_settings) = settings.get("802-11-wireless") {
+                                    wireless_settings
+                                        .get("hidden")
+                                        .map(|v| v.try_clone().ok().and_then(|v| v.try_into().ok()))
+                                        .flatten()
+                                        .unwrap_or(false)
+                                } else {
+                                    false
+                                };
 
                             // Get security type from wireless-security settings
                             let security = if settings.contains_key("802-11-wireless-security") {
@@ -500,7 +507,11 @@ impl NMClient {
     }
 
     /// Update connection autoconnect setting
-    pub async fn set_connection_autoconnect(&self, connection_path: &str, autoconnect: bool) -> Result<()> {
+    pub async fn set_connection_autoconnect(
+        &self,
+        connection_path: &str,
+        autoconnect: bool,
+    ) -> Result<()> {
         let proxy = Proxy::new(
             &self.connection,
             NM_BUS_NAME,
@@ -647,6 +658,7 @@ impl NMClient {
     }
 
     /// Add 802.1X enterprise connection via D-Bus
+    #[allow(clippy::too_many_arguments, clippy::collapsible_if)]
     pub async fn add_enterprise_connection(
         &self,
         ssid: &str,
@@ -700,19 +712,28 @@ impl NMClient {
 
         if let Some(ca) = ca_cert {
             if !ca.is_empty() {
-                eap.insert("ca-cert", Value::from(format!("file://{}", ca).as_bytes().to_vec()));
+                eap.insert(
+                    "ca-cert",
+                    Value::from(format!("file://{}", ca).as_bytes().to_vec()),
+                );
             }
         }
 
         if let Some(cert) = client_cert {
             if !cert.is_empty() {
-                eap.insert("client-cert", Value::from(format!("file://{}", cert).as_bytes().to_vec()));
+                eap.insert(
+                    "client-cert",
+                    Value::from(format!("file://{}", cert).as_bytes().to_vec()),
+                );
             }
         }
 
         if let Some(key) = private_key {
             if !key.is_empty() {
-                eap.insert("private-key", Value::from(format!("file://{}", key).as_bytes().to_vec()));
+                eap.insert(
+                    "private-key",
+                    Value::from(format!("file://{}", key).as_bytes().to_vec()),
+                );
             }
         }
 
@@ -734,14 +755,14 @@ impl NMClient {
         ipv6.insert("method", Value::from("auto"));
         connection_settings.insert("ipv6", ipv6);
 
-        let connection_path: OwnedObjectPath = proxy
-            .call("AddConnection", &(connection_settings,))
-            .await?;
+        let connection_path: OwnedObjectPath =
+            proxy.call("AddConnection", &(connection_settings,)).await?;
 
         Ok(connection_path)
     }
 
     /// Add and activate 802.1X enterprise connection
+    #[allow(clippy::too_many_arguments, clippy::collapsible_if)]
     pub async fn add_and_activate_enterprise_connection(
         &self,
         device_path: &str,
@@ -796,19 +817,28 @@ impl NMClient {
 
         if let Some(ca) = ca_cert {
             if !ca.is_empty() {
-                eap.insert("ca-cert", Value::from(format!("file://{}", ca).as_bytes().to_vec()));
+                eap.insert(
+                    "ca-cert",
+                    Value::from(format!("file://{}", ca).as_bytes().to_vec()),
+                );
             }
         }
 
         if let Some(cert) = client_cert {
             if !cert.is_empty() {
-                eap.insert("client-cert", Value::from(format!("file://{}", cert).as_bytes().to_vec()));
+                eap.insert(
+                    "client-cert",
+                    Value::from(format!("file://{}", cert).as_bytes().to_vec()),
+                );
             }
         }
 
         if let Some(key) = private_key {
             if !key.is_empty() {
-                eap.insert("private-key", Value::from(format!("file://{}", key).as_bytes().to_vec()));
+                eap.insert(
+                    "private-key",
+                    Value::from(format!("file://{}", key).as_bytes().to_vec()),
+                );
             }
         }
 

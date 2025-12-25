@@ -1,6 +1,6 @@
 [package]
 name = "impala-nm"
-version = "0.1.3"
+version = "0.1.4"
 authors = ["Aashish Thapa"]
 license = "GPL-3.0"
 edition = "2024"

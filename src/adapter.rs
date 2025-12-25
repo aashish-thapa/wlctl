@@ -14,6 +14,7 @@ use crate::config::Config;
 #[derive(Debug, Clone)]
 pub struct Adapter {
     client: Arc<NMClient>,
+    #[allow(dead_code)]
     device_path: String,
     pub is_powered: bool,
     pub name: String,

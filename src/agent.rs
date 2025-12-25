@@ -102,10 +102,7 @@ impl AuthAgent {
     pub async fn wait_for_passphrase(&self) -> Option<String> {
         tokio::select! {
             r = self.rx_passphrase.recv() => {
-                match r {
-                    Ok(key) => Some(key),
-                    Err(_) => None,
-                }
+                r.ok()
             }
             _ = self.rx_cancel.recv() => {
                 None

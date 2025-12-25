@@ -356,8 +356,14 @@ mod tests {
         assert_eq!(SecurityType::from_flags(0, 0, 0x400), SecurityType::WPA3);
 
         // Enterprise
-        assert_eq!(SecurityType::from_flags(0, 0x200, 0), SecurityType::Enterprise);
-        assert_eq!(SecurityType::from_flags(0, 0, 0x200), SecurityType::Enterprise);
+        assert_eq!(
+            SecurityType::from_flags(0, 0x200, 0),
+            SecurityType::Enterprise
+        );
+        assert_eq!(
+            SecurityType::from_flags(0, 0, 0x200),
+            SecurityType::Enterprise
+        );
     }
 
     #[test]
@@ -418,10 +424,22 @@ mod tests {
 
     #[test]
     fn test_station_state_from_device_state() {
-        assert_eq!(StationState::from(DeviceState::Activated), StationState::Connected);
-        assert_eq!(StationState::from(DeviceState::Prepare), StationState::Connecting);
-        assert_eq!(StationState::from(DeviceState::Deactivating), StationState::Disconnecting);
-        assert_eq!(StationState::from(DeviceState::Disconnected), StationState::Disconnected);
+        assert_eq!(
+            StationState::from(DeviceState::Activated),
+            StationState::Connected
+        );
+        assert_eq!(
+            StationState::from(DeviceState::Prepare),
+            StationState::Connecting
+        );
+        assert_eq!(
+            StationState::from(DeviceState::Deactivating),
+            StationState::Disconnecting
+        );
+        assert_eq!(
+            StationState::from(DeviceState::Disconnected),
+            StationState::Disconnected
+        );
     }
 
     #[test]
@@ -436,10 +454,25 @@ mod tests {
 
     #[test]
     fn test_active_connection_state_from_u32() {
-        assert_eq!(ActiveConnectionState::from(0), ActiveConnectionState::Unknown);
-        assert_eq!(ActiveConnectionState::from(1), ActiveConnectionState::Activating);
-        assert_eq!(ActiveConnectionState::from(2), ActiveConnectionState::Activated);
-        assert_eq!(ActiveConnectionState::from(3), ActiveConnectionState::Deactivating);
-        assert_eq!(ActiveConnectionState::from(4), ActiveConnectionState::Deactivated);
+        assert_eq!(
+            ActiveConnectionState::from(0),
+            ActiveConnectionState::Unknown
+        );
+        assert_eq!(
+            ActiveConnectionState::from(1),
+            ActiveConnectionState::Activating
+        );
+        assert_eq!(
+            ActiveConnectionState::from(2),
+            ActiveConnectionState::Activated
+        );
+        assert_eq!(
+            ActiveConnectionState::from(3),
+            ActiveConnectionState::Deactivating
+        );
+        assert_eq!(
+            ActiveConnectionState::from(4),
+            ActiveConnectionState::Deactivated
+        );
     }
 }
