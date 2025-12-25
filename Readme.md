@@ -1,5 +1,5 @@
 <div align="center">
-  <h1>impala-nm</h1>
+  <h1>wlctl</h1>
   <h3>TUI for managing WiFi using NetworkManager</h3>
   <p>A fork of <a href="https://github.com/pythops/impala">impala</a> that uses NetworkManager instead of iwd</p>
 </div>
@@ -32,10 +32,10 @@ I personally love impala but it has limitation due to use of iwd. So, this repo 
 
 ### 📦 crates.io
 
-You can install `impala-nm` from [crates.io](https://crates.io/crates/impala-nm)
+You can install `wlctl` from [crates.io](https://crates.io/crates/wlctl)
 
 ```shell
-cargo install impala-nm
+cargo install wlctl
 ```
 
 ### ⚒️ Build from source
@@ -48,7 +48,7 @@ cd impalawithnm
 cargo build --release
 ```
 
-This will produce an executable file at `target/release/impala-nm` that you can copy to a directory in your `$PATH`.
+This will produce an executable file at `target/release/wlctl` that you can copy to a directory in your `$PATH`.
 
 ## 🪄 Usage
 
@@ -98,7 +98,7 @@ This will produce an executable file at `target/release/impala-nm` that you can 
 
 ## Custom keybindings
 
-Keybindings can be customized in the config file `$HOME/.config/impala/config.toml`
+Keybindings can be customized in the config file `$HOME/.config/wlctl/config.toml`
 
 ```toml
 switch = "r"
@@ -125,8 +125,8 @@ share = "p"
 
 ## Differences from upstream impala
 
-| Feature | impala (upstream) | impala-nm (this fork) |
-|---------|-------------------|----------------------|
+| Feature | impala (upstream) | wlctl (this fork) |
+|---------|-------------------|-------------------|
 | Backend | iwd | NetworkManager |
 | Config location | `/var/lib/iwd/` | `/etc/NetworkManager/system-connections/` |
 | Conflicts | Conflicts with NetworkManager | Works alongside existing setup |

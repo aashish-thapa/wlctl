@@ -25,17 +25,17 @@ jobs:
       - name: Build for x86_64
         run: |
           CROSS_CONTAINER_ENGINE=podman cross build --target=x86_64-unknown-linux-musl --release
-          cp target/x86_64-unknown-linux-musl/release/impala-nm impala-nm-x86_64-unknown-linux-musl
+          cp target/x86_64-unknown-linux-musl/release/wlctl wlctl-x86_64-unknown-linux-musl
 
       - name: Build for arm64
         run: |
           CROSS_CONTAINER_ENGINE=podman cross build --target=aarch64-unknown-linux-musl --release
-          cp target/aarch64-unknown-linux-musl/release/impala-nm impala-nm-aarch64-unknown-linux-musl
+          cp target/aarch64-unknown-linux-musl/release/wlctl wlctl-aarch64-unknown-linux-musl
 
       - name: Upload Binary
         uses: softprops/action-gh-release@v2
         with:
-          files: "impala-nm*"
+          files: "wlctl*"
 
       - name: Publish to crates.io
         run: cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }}

@@ -150,7 +150,7 @@ impl Config {
     pub fn new() -> Self {
         let conf_path = dirs::config_dir()
             .unwrap()
-            .join("impala")
+            .join("wlctl")
             .join("config.toml");
 
         let config = std::fs::read_to_string(conf_path).unwrap_or_default();

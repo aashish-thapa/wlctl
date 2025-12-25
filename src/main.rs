@@ -1,7 +1,7 @@
 use anyhow::Result;
 use anyhow::anyhow;
 use env_logger::Target;
-use impala_nm::{
+use wlctl::{
     app::App,
     cli,
     config::Config,
@@ -115,7 +115,7 @@ You do not have the required permissions. Ensure you are part of the appropriate
 
             Event::EapNeworkConfigured(network_name) => {
                 app.auth.reset();
-                app.focused_block = impala_nm::app::FocusedBlock::KnownNetworks;
+                app.focused_block = wlctl::app::FocusedBlock::KnownNetworks;
                 Notification::send(
                     format!("Network {} configured", network_name),
                     NotificationLevel::Info,
@@ -142,29 +142,29 @@ You do not have the required permissions. Ensure you are part of the appropriate
                         exit_error_message = Some(e);
                         break;
                     }
-                    app.focused_block = impala_nm::app::FocusedBlock::KnownNetworks;
+                    app.focused_block = wlctl::app::FocusedBlock::KnownNetworks;
                     app.auth.request_username_and_password = None;
                 }
             }
 
             Event::ConfigureNewEapNetwork(network_name) => {
                 app.auth.init_eap(network_name, Some(app.client.clone()));
-                app.focused_block = impala_nm::app::FocusedBlock::WpaEntrepriseAuth;
+                app.focused_block = wlctl::app::FocusedBlock::WpaEntrepriseAuth;
             }
 
             Event::AuthReqKeyPassphrase(network_name) => {
                 app.auth.init_request_key_passphrase(network_name.clone());
-                app.focused_block = impala_nm::app::FocusedBlock::RequestKeyPasshphrase;
+                app.focused_block = wlctl::app::FocusedBlock::RequestKeyPasshphrase;
             }
 
             Event::AuthRequestPassword((network_name, user_name)) => {
                 app.auth.init_request_password(network_name, user_name);
-                app.focused_block = impala_nm::app::FocusedBlock::RequestPassword
+                app.focused_block = wlctl::app::FocusedBlock::RequestPassword
             }
 
             Event::AuthReqUsernameAndPassword(network_name) => {
                 app.auth.init_request_username_and_password(network_name);
-                app.focused_block = impala_nm::app::FocusedBlock::RequestUsernameAndPassword
+                app.focused_block = wlctl::app::FocusedBlock::RequestUsernameAndPassword
             }
 
             _ => {}

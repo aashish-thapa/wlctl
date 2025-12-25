@@ -1,8 +1,8 @@
 use clap::{Command, arg, crate_version};
 
 pub fn cli() -> Command {
-    Command::new("impala")
-        .about("TUI For managing wifi")
+    Command::new("wlctl")
+        .about("TUI for managing WiFi using NetworkManager")
         .version(crate_version!())
         .arg(
             arg!(--mode <mode>)

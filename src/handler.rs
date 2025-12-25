@@ -442,7 +442,7 @@ pub async fn handle_key_events(
                                         {
                                             if unsafe { libc::geteuid() } != 0 {
                                                 let _ = Notification::send(
-                                                    "impala must be run as root to share networks"
+                                                    "wlctl must be run as root to share networks"
                                                         .to_string(),
                                                     notification::NotificationLevel::Info,
                                                     &sender,

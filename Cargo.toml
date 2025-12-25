@@ -1,10 +1,10 @@
 [package]
-name = "impala-nm"
-version = "0.1.4"
+name = "wlctl"
+version = "0.1.0"
 authors = ["Aashish Thapa"]
 license = "GPL-3.0"
 edition = "2024"
-description = "TUI for managing wifi using NetworkManager"
+description = "TUI for managing WiFi using NetworkManager"
 readme = "Readme.md"
 homepage = "https://github.com/aashish-thapa/impalawithnm"
 repository = "https://github.com/aashish-thapa/impalawithnm"
