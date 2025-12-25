@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 pub mod auth;
 pub mod known_network;
 pub mod network;
@@ -6,13 +6,7 @@ pub mod share;
 
 use std::sync::Arc;
 
-use futures::future::join_all;
-use iwdrs::{
-    error::{IWDError, station::ScanError},
-    hidden_network::HiddenNetwork,
-    session::Session,
-    station::{State, diagnostics::ActiveStationDiagnostics},
-};
+use crate::nm::{AccessPointInfo, DiagnosticInfo, NMClient, StationState};
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Flex, Layout},
@@ -33,10 +27,19 @@ use crate::{
 
 use network::Network;
 
+/// Hidden network representation for NetworkManager
+#[derive(Debug, Clone)]
+pub struct HiddenNetwork {
+    pub address: String,
+    pub network_type: String,
+    pub signal_strength: i16,
+}
+
 #[derive(Clone)]
 pub struct Station {
-    pub session: Arc<Session>,
-    pub state: State,
+    pub client: Arc<NMClient>,
+    pub device_path: String,
+    pub state: StationState,
     pub is_scanning: bool,
     pub connected_network: Option<Network>,
     pub new_networks: Vec<(Network, i16)>,
@@ -45,84 +48,71 @@ pub struct Station {
     pub unavailable_known_networks: Vec<KnownNetwork>,
     pub known_networks_state: TableState,
     pub new_networks_state: TableState,
-    pub diagnostic: Option<ActiveStationDiagnostics>,
+    pub diagnostic: Option<DiagnosticInfo>,
     pub show_unavailable_known_networks: bool,
     pub show_hidden_networks: bool,
     pub share: Option<Share>,
 }
 
 impl Station {
-    pub async fn new(session: Arc<Session>) -> Result<Self> {
-        let iwd_station = session
-            .stations()
-            .await?
-            .pop()
-            .context("no station found")?;
+    pub async fn new(client: Arc<NMClient>, device_path: String) -> Result<Self> {
+        let device_state = client.get_device_state(&device_path).await?;
+        let state = StationState::from(device_state);
 
-        let iwd_station_diagnostic = session.stations_diagnostics().await?.pop();
+        // Get current connected network
+        let connected_ssid = client.get_connected_ssid(&device_path).await?;
 
-        let state = iwd_station.state().await?;
-        let connected_network = {
-            if let Some(n) = iwd_station.connected_network().await? {
-                let network = Network::new(n.clone()).await?;
-                Some(network)
-            } else {
-                None
-            }
-        };
+        // Get all visible access points
+        let visible_networks = client.get_visible_networks(&device_path).await?;
 
-        let is_scanning = iwd_station.is_scanning().await?;
-        let discovered_networks = iwd_station.discovered_networks().await?;
-        let networks = {
-            let collected_futures = discovered_networks
+        // Get all saved WiFi connections
+        let saved_connections = client.get_wifi_connections().await?;
+
+        // Build networks list
+        let mut new_networks: Vec<(Network, i16)> = Vec::new();
+        let mut known_networks: Vec<(Network, i16)> = Vec::new();
+        let mut connected_network: Option<Network> = None;
+
+        for ap_info in visible_networks {
+            let is_connected = Some(&ap_info.ssid) == connected_ssid.as_ref();
+            let signal = ap_info.strength as i16 * 100; // Convert 0-100 to match iwd format
+
+            // Check if this network has a saved connection
+            let known_network = saved_connections
                 .iter()
-                .map(|(n, signal)| async {
-                    match Network::new(n.clone()).await {
-                        Ok(network) => Ok((network, signal.to_owned())),
-                        Err(e) => Err(e),
-                    }
-                })
-                .collect::<Vec<_>>();
-            let results = join_all(collected_futures).await;
-            results
-                .into_iter()
-                .filter_map(Result::ok)
-                .collect::<Vec<(Network, i16)>>()
-        };
+                .find(|conn| conn.ssid == ap_info.ssid)
+                .map(|conn| KnownNetwork::from_connection_info(client.clone(), conn.clone()));
 
-        let new_networks: Vec<(Network, i16)> = networks
-            .clone()
-            .into_iter()
-            .filter(|(net, _signal)| net.known_network.is_none())
-            .collect();
+            let network = Network::from_access_point(
+                client.clone(),
+                device_path.clone(),
+                ap_info,
+                known_network.clone(),
+                is_connected,
+            );
 
-        let new_hidden_networks = iwd_station
-            .get_hidden_networks()
-            .await
-            .unwrap_or(Vec::new());
+            if is_connected {
+                connected_network = Some(network.clone());
+            }
 
-        let known_networks: Vec<(Network, i16)> = networks
-            .into_iter()
-            .filter(|(net, _signal)| net.known_network.is_some())
-            .collect();
-
-        let available_networks_names: Vec<String> =
-            known_networks.iter().map(|(n, _)| n.name.clone()).collect();
-
-        let unavailable_known_networks =
-            if let Ok(iwd_known_networks) = session.known_networks().await {
-                let mut unavailable_known_networks = Vec::new();
-                for iwd_network in iwd_known_networks {
-                    if let Ok(known_network) = KnownNetwork::new(iwd_network).await
-                        && !available_networks_names.contains(&known_network.name)
-                    {
-                        unavailable_known_networks.push(known_network);
-                    }
-                }
-                unavailable_known_networks
+            if known_network.is_some() {
+                known_networks.push((network, signal));
             } else {
-                Vec::new()
-            };
+                new_networks.push((network, signal));
+            }
+        }
+
+        // Get unavailable known networks (saved but not visible)
+        let visible_ssids: Vec<&str> = known_networks
+            .iter()
+            .map(|(n, _)| n.name.as_str())
+            .collect();
+
+        let unavailable_known_networks: Vec<KnownNetwork> = saved_connections
+            .into_iter()
+            .filter(|conn| !visible_ssids.contains(&conn.ssid.as_str()))
+            .map(|conn| KnownNetwork::from_connection_info(client.clone(), conn))
+            .collect();
 
         let mut new_networks_state = TableState::default();
         if new_networks.is_empty() {
@@ -132,26 +122,41 @@ impl Station {
         }
 
         let mut known_networks_state = TableState::default();
-
         if known_networks.is_empty() {
             known_networks_state.select(None);
         } else {
             known_networks_state.select(Some(0));
         }
 
-        let diagnostic = if let Some(diagnostic) = iwd_station_diagnostic {
-            diagnostic.get().await.ok()
+        // Get diagnostic info if connected
+        let diagnostic = if connected_network.is_some() {
+            // Try to get active AP info for diagnostics
+            if let Some(ap_path) = client.get_active_access_point(&device_path).await? {
+                if let Ok(ap_info) = client.get_access_point_info(ap_path.as_str()).await {
+                    Some(DiagnosticInfo {
+                        frequency: Some(ap_info.frequency),
+                        signal_strength: Some(ap_info.strength as i32),
+                        security: Some(ap_info.security.to_string()),
+                        ..Default::default()
+                    })
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
         } else {
             None
         };
 
         Ok(Self {
-            session,
+            client,
+            device_path,
             state,
-            is_scanning,
+            is_scanning: false,
             connected_network,
             new_networks,
-            new_hidden_networks,
+            new_hidden_networks: Vec::new(), // NetworkManager doesn't list hidden networks separately
             known_networks,
             unavailable_known_networks,
             known_networks_state,
@@ -163,74 +168,68 @@ impl Station {
         })
     }
 
-    pub async fn connect_hidden_network(&self, ssid: String) -> Result<()> {
-        let iwd_station = self
-            .session
-            .stations()
-            .await?
-            .pop()
-            .context("No station found")?;
-        iwd_station.connect_hidden_network(ssid).await?;
-        Ok(())
+    pub async fn connect_hidden_network(&self, ssid: String, password: Option<&str>) -> Result<()> {
+        // For hidden networks, we need to create a connection with the hidden flag
+        // This is handled by add_and_activate_connection with special settings
+        // For now, we'll return an error - full hidden network support needs more work
+        Err(anyhow::anyhow!(
+            "Hidden network connection not yet implemented for NetworkManager"
+        ))
     }
 
     pub async fn refresh(&mut self) -> Result<()> {
-        let iwd_station = self
-            .session
-            .stations()
-            .await?
-            .pop()
-            .context("No station found")?;
+        let device_state = self.client.get_device_state(&self.device_path).await?;
+        self.state = StationState::from(device_state);
 
-        self.state = iwd_station.state().await?;
-        self.is_scanning = iwd_station.is_scanning().await?;
+        // Get current connected network
+        let connected_ssid = self.client.get_connected_ssid(&self.device_path).await?;
 
-        let connected_network = {
-            if let Some(n) = iwd_station.connected_network().await? {
-                let network = Network::new(n.clone()).await?;
-                Some(network)
-            } else {
-                None
-            }
-        };
+        // Get all visible access points
+        let visible_networks = self.client.get_visible_networks(&self.device_path).await?;
 
-        let discovered_networks = iwd_station.discovered_networks().await?;
-        let networks = {
-            let collected_futures = discovered_networks
+        // Get all saved WiFi connections
+        let saved_connections = self.client.get_wifi_connections().await?;
+
+        // Build networks list
+        let mut new_networks: Vec<(Network, i16)> = Vec::new();
+        let mut known_networks: Vec<(Network, i16)> = Vec::new();
+        let mut connected_network: Option<Network> = None;
+
+        for ap_info in visible_networks {
+            let is_connected = Some(&ap_info.ssid) == connected_ssid.as_ref();
+            let signal = ap_info.strength as i16 * 100;
+
+            let known_network = saved_connections
                 .iter()
-                .map(|(n, signal)| async {
-                    match Network::new(n.clone()).await {
-                        Ok(network) => Ok((network, signal.to_owned())),
-                        Err(e) => Err(e),
-                    }
-                })
-                .collect::<Vec<_>>();
-            let results = join_all(collected_futures).await;
-            results
-                .into_iter()
-                .filter_map(Result::ok)
-                .collect::<Vec<(Network, i16)>>()
-        };
+                .find(|conn| conn.ssid == ap_info.ssid)
+                .map(|conn| KnownNetwork::from_connection_info(self.client.clone(), conn.clone()));
 
-        let new_networks: Vec<(Network, i16)> = networks
-            .clone()
-            .into_iter()
-            .filter(|(net, _signal)| net.known_network.is_none())
-            .collect();
+            let network = Network::from_access_point(
+                self.client.clone(),
+                self.device_path.clone(),
+                ap_info,
+                known_network.clone(),
+                is_connected,
+            );
 
-        let known_networks: Vec<(Network, i16)> = networks
-            .into_iter()
-            .filter(|(net, _signal)| net.known_network.is_some())
-            .collect();
+            if is_connected {
+                connected_network = Some(network.clone());
+            }
 
+            if known_network.is_some() {
+                known_networks.push((network, signal));
+            } else {
+                new_networks.push((network, signal));
+            }
+        }
+
+        // Update network lists, preserving selection if possible
         if self.new_networks.len() == new_networks.len() {
+            // Just update signal strengths
             self.new_networks.iter_mut().for_each(|(net, signal)| {
-                let n = new_networks
-                    .iter()
-                    .find(|(refreshed_net, _signal)| refreshed_net.name == net.name);
-
-                if let Some((_, refreshed_signal)) = n {
-                    *signal = *refreshed_signal;
+                if let Some((_, new_signal)) = new_networks.iter().find(|(n, _)| n.name == net.name)
+                {
+                    *signal = *new_signal;
                 }
             });
         } else {
@@ -240,21 +239,22 @@ impl Station {
             } else {
                 new_networks_state.select(Some(0));
             }
-
             self.new_networks_state = new_networks_state;
             self.new_networks = new_networks;
         }
 
         if self.known_networks.len() == known_networks.len() {
+            // Just update signal strengths and autoconnect status
             self.known_networks.iter_mut().for_each(|(net, signal)| {
-                let n = known_networks
-                    .iter()
-                    .find(|(refreshed_net, _signal)| refreshed_net.name == net.name);
-
-                if let Some((refreshed_net, refreshed_signal)) = n {
-                    net.known_network.as_mut().unwrap().is_autoconnect =
-                        refreshed_net.known_network.as_ref().unwrap().is_autoconnect;
-                    *signal = *refreshed_signal;
+                if let Some((refreshed_net, new_signal)) =
+                    known_networks.iter().find(|(n, _)| n.name == net.name)
+                {
+                    if let Some(known) = &mut net.known_network {
+                        if let Some(refreshed_known) = &refreshed_net.known_network {
+                            known.is_autoconnect = refreshed_known.is_autoconnect;
+                        }
+                    }
+                    *signal = *new_signal;
                 }
             });
         } else {
@@ -268,84 +268,86 @@ impl Station {
             self.known_networks = known_networks;
         }
 
-        self.new_hidden_networks = iwd_station
-            .get_hidden_networks()
-            .await
-            .unwrap_or(Vec::new());
-
-        let available_networks_names: Vec<String> = self
+        // Update unavailable known networks
+        let visible_ssids: Vec<&str> = self
             .known_networks
             .iter()
-            .map(|(n, _)| n.name.clone())
+            .map(|(n, _)| n.name.as_str())
             .collect();
 
-        let unavailable_known_networks =
-            if let Ok(iwd_known_networks) = self.session.known_networks().await {
-                let mut unavailable_known_networks = Vec::new();
-                for iwd_network in iwd_known_networks {
-                    if let Ok(known_network) = KnownNetwork::new(iwd_network).await
-                        && !available_networks_names.contains(&known_network.name)
-                    {
-                        unavailable_known_networks.push(known_network);
-                    }
-                }
-                unavailable_known_networks
-            } else {
-                Vec::new()
-            };
-
-        self.unavailable_known_networks = unavailable_known_networks;
+        self.unavailable_known_networks = saved_connections
+            .into_iter()
+            .filter(|conn| !visible_ssids.contains(&conn.ssid.as_str()))
+            .map(|conn| KnownNetwork::from_connection_info(self.client.clone(), conn))
+            .collect();
 
         self.connected_network = connected_network;
 
-        let iwd_station_diagnostic = self.session.stations_diagnostics().await.unwrap().pop();
-        self.diagnostic = if let Some(diagnostic) = iwd_station_diagnostic {
-            diagnostic.get().await.ok()
+        // Update diagnostic info
+        if self.connected_network.is_some() {
+            if let Some(ap_path) = self.client.get_active_access_point(&self.device_path).await? {
+                if let Ok(ap_info) = self.client.get_access_point_info(ap_path.as_str()).await {
+                    self.diagnostic = Some(DiagnosticInfo {
+                        frequency: Some(ap_info.frequency),
+                        signal_strength: Some(ap_info.strength as i32),
+                        security: Some(ap_info.security.to_string()),
+                        ..Default::default()
+                    });
+                }
+            }
         } else {
-            None
-        };
-
-        Ok(())
-    }
-
-    pub async fn scan(&self, sender: UnboundedSender<Event>) -> Result<()> {
-        let iwd_station = self.session.stations().await.unwrap().pop().unwrap();
-        match iwd_station.scan().await {
-            Ok(()) => Notification::send(
-                "Start Scanning".to_string(),
-                NotificationLevel::Info,
-                &sender,
-            )?,
-            Err(e) => match e {
-                IWDError::OperationError(e) => match e {
-                    ScanError::Busy => {
-                        Notification::send(e.to_string(), NotificationLevel::Info, &sender.clone())?
-                    }
-                    _ => Notification::send(
-                        e.to_string(),
-                        NotificationLevel::Error,
-                        &sender.clone(),
-                    )?,
-                },
-                _ => Notification::send(e.to_string(), NotificationLevel::Error, &sender.clone())?,
-            },
+            self.diagnostic = None;
         }
 
         Ok(())
     }
 
+    pub async fn scan(&mut self, sender: UnboundedSender<Event>) -> Result<()> {
+        match self.client.request_scan(&self.device_path).await {
+            Ok(()) => {
+                self.is_scanning = true;
+                Notification::send(
+                    "Start Scanning".to_string(),
+                    NotificationLevel::Info,
+                    &sender,
+                )?;
+            }
+            Err(e) => {
+                let msg = e.to_string();
+                if msg.contains("Scanning not allowed") {
+                    Notification::send(
+                        "Scanning in progress".to_string(),
+                        NotificationLevel::Info,
+                        &sender,
+                    )?;
+                } else {
+                    Notification::send(msg, NotificationLevel::Error, &sender)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub async fn disconnect(&self, sender: UnboundedSender<Event>) -> Result<()> {
-        let iwd_station = self.session.stations().await.unwrap().pop().unwrap();
-        match iwd_station.disconnect().await {
-            Ok(()) => Notification::send(
-                format!(
-                    "Disconnected from {}",
-                    self.connected_network.as_ref().unwrap().name
-                ),
-                NotificationLevel::Info,
-                &sender,
-            )?,
-            Err(e) => Notification::send(e.to_string(), NotificationLevel::Error, &sender.clone())?,
+        match self.client.disconnect_device(&self.device_path).await {
+            Ok(()) => {
+                if let Some(network) = &self.connected_network {
+                    Notification::send(
+                        format!("Disconnected from {}", network.name),
+                        NotificationLevel::Info,
+                        &sender,
+                    )?;
+                } else {
+                    Notification::send(
+                        "Disconnected".to_string(),
+                        NotificationLevel::Info,
+                        &sender,
+                    )?;
+                }
+            }
+            Err(e) => {
+                Notification::send(e.to_string(), NotificationLevel::Error, &sender)?;
+            }
         }
         Ok(())
     }
@@ -388,7 +390,11 @@ impl Station {
             Line::from(if self.is_scanning { "Yes" } else { "No" }).centered(),
             Line::from({
                 if let Some(diagnostic) = &self.diagnostic {
-                    format!("{:.2} GHz", diagnostic.frequency_mhz as f32 / 1000.)
+                    if let Some(freq) = diagnostic.frequency {
+                        format!("{:.2} GHz", freq as f32 / 1000.)
+                    } else {
+                        "-".to_string()
+                    }
                 } else {
                     "-".to_string()
                 }
@@ -396,7 +402,7 @@ impl Station {
             .centered(),
             Line::from({
                 if let Some(diagnostic) = &self.diagnostic {
-                    diagnostic.security.to_string()
+                    diagnostic.security.clone().unwrap_or("-".to_string())
                 } else {
                     "-".to_string()
                 }
@@ -486,35 +492,39 @@ impl Station {
             .known_networks
             .iter()
             .map(|(net, signal)| {
-                let net = net.known_network.as_ref().unwrap();
-                let signal = format!("{}%", {
-                    if *signal / 100 >= -50 {
+                let known = net.known_network.as_ref().unwrap();
+                let signal_percent = {
+                    let s = *signal / 100;
+                    if s >= 100 {
                         100
+                    } else if s <= 0 {
+                        0
                     } else {
-                        2 * (100 + signal / 100)
+                        s
                     }
-                });
+                };
+                let signal_str = format!("{}%", signal_percent);
 
                 if let Some(connected_net) = &self.connected_network {
                     if connected_net.name == net.name {
                         let row = vec![
                             Line::from("󰖩 ").centered(),
-                            Line::from(net.name.clone()).centered(),
-                            Line::from(net.network_type.to_string()).centered(),
-                            Line::from(if net.is_hidden { "Yes" } else { "No" }).centered(),
-                            Line::from(if net.is_autoconnect { "Yes" } else { "No" }).centered(),
-                            Line::from(signal).centered(),
+                            Line::from(known.name.clone()).centered(),
+                            Line::from(known.network_type.to_string()).centered(),
+                            Line::from(if known.is_hidden { "Yes" } else { "No" }).centered(),
+                            Line::from(if known.is_autoconnect { "Yes" } else { "No" }).centered(),
+                            Line::from(signal_str).centered(),
                         ];
 
                         Row::new(row)
                     } else {
                         let row = vec![
                             Line::from(""),
-                            Line::from(net.name.clone()).centered(),
-                            Line::from(net.network_type.to_string()).centered(),
-                            Line::from(if net.is_hidden { "Yes" } else { "No" }).centered(),
-                            Line::from(if net.is_autoconnect { "Yes" } else { "No" }).centered(),
-                            Line::from(signal).centered(),
+                            Line::from(known.name.clone()).centered(),
+                            Line::from(known.network_type.to_string()).centered(),
+                            Line::from(if known.is_hidden { "Yes" } else { "No" }).centered(),
+                            Line::from(if known.is_autoconnect { "Yes" } else { "No" }).centered(),
+                            Line::from(signal_str).centered(),
                         ];
 
                         Row::new(row)
@@ -522,11 +532,11 @@ impl Station {
                 } else {
                     let row = vec![
                         Line::from("").centered(),
-                        Line::from(net.name.clone()).centered(),
-                        Line::from(net.network_type.to_string()).centered(),
-                        Line::from(if net.is_hidden { "Yes" } else { "No" }).centered(),
-                        Line::from(if net.is_autoconnect { "Yes" } else { "No" }).centered(),
-                        Line::from(signal).centered(),
+                        Line::from(known.name.clone()).centered(),
+                        Line::from(known.network_type.to_string()).centered(),
+                        Line::from(if known.is_hidden { "Yes" } else { "No" }).centered(),
+                        Line::from(if known.is_autoconnect { "Yes" } else { "No" }).centered(),
+                        Line::from(signal_str).centered(),
                     ];
 
                     Row::new(row)
@@ -632,22 +642,25 @@ impl Station {
             .new_networks
             .iter()
             .map(|(net, signal)| {
+                let signal_percent = {
+                    let s = *signal / 100;
+                    if s >= 100 {
+                        100
+                    } else if s <= 0 {
+                        0
+                    } else {
+                        s
+                    }
+                };
                 Row::new(vec![
                     Line::from(net.name.clone()).centered(),
-                    Line::from(net.network_type.to_string().clone()).centered(),
+                    Line::from(net.network_type.to_string()).centered(),
                     Line::from({
-                        let signal = {
-                            if *signal / 100 >= -50 {
-                                100
-                            } else {
-                                2 * (100 + signal / 100)
-                            }
-                        };
-                        match signal {
-                            n if n >= 75 => format!("{signal:3}% 󰤨"),
-                            n if (50..75).contains(&n) => format!("{signal:3}% 󰤥"),
-                            n if (25..50).contains(&n) => format!("{signal:3}% 󰤢"),
-                            _ => format!("{signal:3}% 󰤟"),
+                        match signal_percent {
+                            n if n >= 75 => format!("{signal_percent:3}% 󰤨"),
+                            n if (50..75).contains(&n) => format!("{signal_percent:3}% 󰤥"),
+                            n if (25..50).contains(&n) => format!("{signal_percent:3}% 󰤢"),
+                            _ => format!("{signal_percent:3}% 󰤟"),
                         }
                     })
                     .centered(),
@@ -657,23 +670,26 @@ impl Station {
 
         if self.show_hidden_networks {
             self.new_hidden_networks.iter().for_each(|net| {
+                let signal_percent = {
+                    let s = net.signal_strength / 100;
+                    if s >= 100 {
+                        100
+                    } else if s <= 0 {
+                        0
+                    } else {
+                        s
+                    }
+                };
                 rows.push(
                     Row::new(vec![
                         Line::from(net.address.clone()).centered(),
-                        Line::from(net.network_type.to_string().clone()).centered(),
+                        Line::from(net.network_type.clone()).centered(),
                         Line::from({
-                            let signal = {
-                                if net.signal_strength / 100 >= -50 {
-                                    100
-                                } else {
-                                    2 * (100 + net.signal_strength / 100)
-                                }
-                            };
-                            match signal {
-                                n if n >= 75 => format!("{signal:3}% 󰤨"),
-                                n if (50..75).contains(&n) => format!("{signal:3}% 󰤥"),
-                                n if (25..50).contains(&n) => format!("{signal:3}% 󰤢"),
-                                _ => format!("{signal:3}% 󰤟"),
+                            match signal_percent {
+                                n if n >= 75 => format!("{signal_percent:3}% 󰤨"),
+                                n if (50..75).contains(&n) => format!("{signal_percent:3}% 󰤥"),
+                                n if (25..50).contains(&n) => format!("{signal_percent:3}% 󰤢"),
+                                _ => format!("{signal_percent:3}% 󰤟"),
                             }
                         })
                         .centered(),
@@ -786,10 +802,10 @@ impl Station {
                             Span::from(" Scan"),
                         ]),
                         Line::from(vec![
-                            Span::from("k,").bold(),
+                            Span::from("k,").bold(),
                             Span::from("  Up"),
                             Span::from(" | "),
-                            Span::from("j,").bold(),
+                            Span::from("j,").bold(),
                             Span::from("  Down"),
                             Span::from(" | "),
                             Span::from("⇄").bold(),
@@ -805,10 +821,10 @@ impl Station {
                     ]
                 } else {
                     vec![Line::from(vec![
-                        Span::from("k,").bold(),
+                        Span::from("k,").bold(),
                         Span::from("  Up"),
                         Span::from(" | "),
-                        Span::from("j,").bold(),
+                        Span::from("j,").bold(),
                         Span::from("  Down"),
                         Span::from(" | "),
                         Span::from("󱁐  or ↵ ").bold(),
@@ -849,10 +865,10 @@ impl Station {
                             Span::from(" Scan"),
                         ]),
                         Line::from(vec![
-                            Span::from("k,").bold(),
+                            Span::from("k,").bold(),
                             Span::from("  Up"),
                             Span::from(" | "),
-                            Span::from("j,").bold(),
+                            Span::from("j,").bold(),
                             Span::from("  Down"),
                             Span::from(" | "),
                             Span::from("ctrl+r").bold(),
@@ -864,10 +880,10 @@ impl Station {
                     ]
                 } else {
                     vec![Line::from(vec![
-                        Span::from("k,").bold(),
+                        Span::from("k,").bold(),
                         Span::from("  Up"),
                         Span::from(" | "),
-                        Span::from("j,").bold(),
+                        Span::from("j,").bold(),
                         Span::from("  Down"),
                         Span::from(" | "),
                         Span::from("󱁐  or ↵ ").bold(),
