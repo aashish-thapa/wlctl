@@ -1,9 +1,7 @@
 use anyhow::Result;
 use std::sync::Arc;
 
-use anyhow::Context;
-
-use iwdrs::{adapter::Adapter as iwdAdapter, session::Session};
+use crate::nm::NMClient;
 use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Direction, Flex, Layout},
@@ -13,36 +11,42 @@ use ratatui::{
 
 use crate::config::Config;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Adapter {
-    adapter: iwdAdapter,
+    client: Arc<NMClient>,
+    device_path: String,
     pub is_powered: bool,
     pub name: String,
-    pub model: Option<String>,
+    pub driver: Option<String>,
     pub vendor: Option<String>,
     pub supported_modes: Vec<String>,
     pub config: Arc<Config>,
 }
 
 impl Adapter {
-    pub async fn new(session: Arc<Session>, config: Arc<Config>) -> Result<Self> {
-        let adapter = session
-            .adapters()
-            .await?
-            .pop()
-            .context("No adapter found")?;
+    pub async fn new(
+        client: Arc<NMClient>,
+        device_path: String,
+        config: Arc<Config>,
+    ) -> Result<Self> {
+        let is_powered = client.is_wireless_enabled().await?;
+        let name = client.get_device_interface(&device_path).await?;
 
-        let is_powered = adapter.is_powered().await?;
-        let name = adapter.name().await?;
-        let model = adapter.model().await.ok();
-        let vendor = adapter.vendor().await.ok();
-        let supported_modes = adapter.supported_modes().await?;
+        // NetworkManager doesn't expose driver/vendor info directly via D-Bus
+        // These would need to be read from sysfs or udev
+        // For now, we'll leave them as None
+        let driver = None;
+        let vendor = None;
+
+        // NetworkManager supports both station and AP modes on most hardware
+        let supported_modes = vec!["station".to_string(), "ap".to_string()];
 
         Ok(Self {
-            adapter,
+            client,
+            device_path,
             is_powered,
             name,
-            model,
+            driver,
             vendor,
             supported_modes,
             config,
@@ -50,7 +54,7 @@ impl Adapter {
     }
 
     pub async fn refresh(&mut self) -> Result<()> {
-        self.is_powered = self.adapter.is_powered().await?;
+        self.is_powered = self.client.is_wireless_enabled().await?;
         Ok(())
     }
 
@@ -89,10 +93,10 @@ impl Adapter {
             ]),
         ];
 
-        if let Some(model) = &self.model {
+        if let Some(driver) = &self.driver {
             rows.push(Row::new(vec![
-                Cell::from("model").style(Style::default().bold().yellow()),
-                Cell::from(model.clone()),
+                Cell::from("driver").style(Style::default().bold().yellow()),
+                Cell::from(driver.clone()),
             ]));
         }
 
