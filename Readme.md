@@ -1,9 +1,12 @@
-## Purpose
-I personally love impala but it has limitation due to use of iwd. So, this repo preserves the beauty but changes the underlying logic to use network manager.
-
 <div align="center">
-  <h2> TUI for managing wifi </h2>
+  <h1>impala-nm</h1>
+  <h3>TUI for managing WiFi using NetworkManager</h3>
+  <p>A fork of <a href="https://github.com/pythops/impala">impala</a> that uses NetworkManager instead of iwd</p>
 </div>
+
+## Purpose
+
+I personally love impala but it has limitation due to use of iwd. So, this repo preserves the beauty but changes the underlying logic to use NetworkManager.
 
 ## 📸 Demo
 
@@ -14,42 +17,25 @@ I personally love impala but it has limitation due to use of iwd. So, this repo 
 - WPA Enterprise (802.1X) Support
 - Station & Access Point Modes
 - QR Code Network Sharing
+- **Uses NetworkManager** - works alongside your existing network setup
 
 ## 💡 Prerequisites
 
 - A Linux based OS
-- [iwd](https://iwd.wiki.kernel.org/) running.
-- [nerdfonts](https://www.nerdfonts.com/) (Optional) for icons.
+- [NetworkManager](https://networkmanager.dev/) running
+- [nerdfonts](https://www.nerdfonts.com/) (Optional) for icons
 
-> [!IMPORTANT]
-> To avoid conflicts, ensure wireless management services like NetworkManager or wpa_supplicant are disabled.
+> [!NOTE]
+> This fork uses NetworkManager instead of iwd, so it works with your existing network configuration without conflicts.
 
 ## 🚀 Installation
 
-### 📥 Binary release
-
-You can download the pre-built binaries from the release page [release page](https://github.com/pythops/impala/releases)
-
 ### 📦 crates.io
 
-You can install `impala` from [crates.io](https://crates.io/crates/impala)
+You can install `impala-nm` from [crates.io](https://crates.io/crates/impala-nm)
 
 ```shell
-cargo install impala
-```
-
-### 🐧Arch Linux
-
-You can install `impala` from the [official repositories](https://archlinux.org/packages/extra/x86_64/impala/) with using [pacman](https://wiki.archlinux.org/title/pacman).
-
-```bash
-pacman -S impala
-```
-
-### Nixpkgs
-
-```shell
-nix-env -iA nixpkgs.impala
+cargo install impala-nm
 ```
 
 ### ⚒️ Build from source
@@ -57,12 +43,12 @@ nix-env -iA nixpkgs.impala
 Run the following command:
 
 ```shell
-git clone https://github.com/pythops/impala
-cd impala
+git clone https://github.com/aashish-thapa/impalawithnm
+cd impalawithnm
 cargo build --release
 ```
 
-This will produce an executable file at `target/release/impala` that you can copy to a directory in your `$PATH`.
+This will produce an executable file at `target/release/impala-nm` that you can copy to a directory in your `$PATH`.
 
 ## 🪄 Usage
 
@@ -115,7 +101,6 @@ This will produce an executable file at `target/release/impala` that you can cop
 Keybindings can be customized in the config file `$HOME/.config/impala/config.toml`
 
 ```toml
-
 switch = "r"
 mode = "station"
 esc_quit = false  # Set to true to enable Esc key to quit the app
@@ -138,11 +123,17 @@ show_all = "a"
 share = "p"
 ```
 
-## Contributing
+## Differences from upstream impala
 
-- No AI slop.
-- Only submit a pull request after having a prior issue or discussion.
-- Keep PRs small and focused.
+| Feature | impala (upstream) | impala-nm (this fork) |
+|---------|-------------------|----------------------|
+| Backend | iwd | NetworkManager |
+| Config location | `/var/lib/iwd/` | `/etc/NetworkManager/system-connections/` |
+| Conflicts | Conflicts with NetworkManager | Works alongside existing setup |
+
+## Credits
+
+This is a fork of [pythops/impala](https://github.com/pythops/impala). All credit for the original UI and architecture goes to the original author.
 
 ## ⚖️ License
 
