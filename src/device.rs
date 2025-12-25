@@ -21,7 +21,7 @@ use crate::{
 #[derive(Clone)]
 pub struct Device {
     client: Arc<NMClient>,
-    device_path: String,
+    pub device_path: String,
     pub name: String,
     pub address: String,
     pub mode: Mode,
