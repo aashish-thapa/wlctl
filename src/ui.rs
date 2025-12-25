@@ -1,6 +1,6 @@
 use std::sync::atomic::Ordering;
 
-use iwdrs::modes::Mode;
+use crate::nm::Mode;
 use ratatui::Frame;
 
 use crate::app::{App, FocusedBlock};
