@@ -1,7 +1,8 @@
 use anyhow::Result;
-use chrono::{DateTime, FixedOffset};
+use chrono::{DateTime, FixedOffset, TimeZone};
+use std::sync::Arc;
 
-use iwdrs::{known_network::KnownNetwork as iwdKnownNetwork, network::NetworkType};
+use crate::nm::{ConnectionInfo, NMClient, SecurityType};
 
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -12,37 +13,38 @@ use crate::{
 
 #[derive(Debug, Clone)]
 pub struct KnownNetwork {
-    pub n: iwdKnownNetwork,
+    pub client: Arc<NMClient>,
+    pub connection_path: String,
     pub name: String,
-    pub network_type: NetworkType,
+    pub network_type: SecurityType,
     pub is_autoconnect: bool,
     pub is_hidden: bool,
     pub last_connected: Option<DateTime<FixedOffset>>,
 }
 
 impl KnownNetwork {
-    pub async fn new(n: iwdKnownNetwork) -> Result<Self> {
-        let name = n.name().await?;
-        let network_type = n.network_type().await?;
-        let is_autoconnect = n.get_autoconnect().await?;
-        let is_hidden = n.hidden().await?;
-        let last_connected = match n.last_connected_time().await {
-            Ok(v) => DateTime::parse_from_rfc3339(&v).ok(),
-            Err(_) => None,
+    pub fn from_connection_info(client: Arc<NMClient>, info: ConnectionInfo) -> Self {
+        // Convert unix timestamp to DateTime
+        let last_connected = if info.timestamp > 0 {
+            FixedOffset::east_opt(0)
+                .and_then(|offset| offset.timestamp_opt(info.timestamp as i64, 0).single())
+        } else {
+            None
         };
 
-        Ok(Self {
-            n,
-            name,
-            network_type,
-            is_autoconnect,
-            is_hidden,
+        Self {
+            client,
+            connection_path: info.path,
+            name: info.ssid,
+            network_type: info.security,
+            is_autoconnect: info.autoconnect,
+            is_hidden: info.hidden,
             last_connected,
-        })
+        }
     }
 
     pub async fn forget(&self, sender: UnboundedSender<Event>) -> Result<()> {
-        match self.n.forget().await {
+        match self.client.delete_connection(&self.connection_path).await {
             Ok(()) => {
                 let _ = Notification::send(
                     format!("The Network {} is removed", self.name),
@@ -59,32 +61,25 @@ impl KnownNetwork {
         Ok(())
     }
 
-    pub async fn toggle_autoconnect(&self, sender: UnboundedSender<Event>) -> Result<()> {
-        if self.is_autoconnect {
-            match self.n.set_autoconnect(false).await {
-                Ok(()) => {
-                    Notification::send(
-                        format!("Disable Autoconnect for: {}", self.name),
-                        NotificationLevel::Info,
-                        &sender.clone(),
-                    )?;
-                }
-                Err(e) => {
-                    Notification::send(e.to_string(), NotificationLevel::Error, &sender.clone())?;
-                }
+    pub async fn toggle_autoconnect(&mut self, sender: UnboundedSender<Event>) -> Result<()> {
+        let new_autoconnect = !self.is_autoconnect;
+
+        match self
+            .client
+            .set_connection_autoconnect(&self.connection_path, new_autoconnect)
+            .await
+        {
+            Ok(()) => {
+                self.is_autoconnect = new_autoconnect;
+                let msg = if new_autoconnect {
+                    format!("Enable Autoconnect for: {}", self.name)
+                } else {
+                    format!("Disable Autoconnect for: {}", self.name)
+                };
+                Notification::send(msg, NotificationLevel::Info, &sender.clone())?;
             }
-        } else {
-            match self.n.set_autoconnect(true).await {
-                Ok(()) => {
-                    Notification::send(
-                        format!("Enable Autoconnect for: {}", self.name),
-                        NotificationLevel::Info,
-                        &sender.clone(),
-                    )?;
-                }
-                Err(e) => {
-                    Notification::send(e.to_string(), NotificationLevel::Error, &sender.clone())?;
-                }
+            Err(e) => {
+                Notification::send(e.to_string(), NotificationLevel::Error, &sender.clone())?;
             }
         }
         Ok(())
