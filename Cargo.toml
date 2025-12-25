@@ -1,13 +1,15 @@
 [package]
-name = "impala"
-version = "0.6.0"
-authors = ["Badr Badri <contact@pythops.com>"]
+name = "impala-nm"
+version = "0.1.0"
+authors = ["Aashish Thapa"]
 license = "GPL-3.0"
 edition = "2024"
-description = "TUI for managing wifi"
+description = "TUI for managing wifi using NetworkManager"
 readme = "Readme.md"
-homepage = "https://github.com/pythops/impala"
-repository = "https://github.com/pythops/impala"
+homepage = "https://github.com/aashish-thapa/impalawithnm"
+repository = "https://github.com/aashish-thapa/impalawithnm"
+keywords = ["wifi", "networkmanager", "tui", "linux", "wireless"]
+categories = ["command-line-utilities"]
 
 [dependencies]
 async-channel = "2"
