@@ -1,3 +1,6 @@
+## Purpose
+I personally love impala but it has limitation due to use of iwd. So, this repo preserves the beauty but changes the underlying logic to use network manager.
+
 <div align="center">
   <h2> TUI for managing wifi </h2>
 </div>
