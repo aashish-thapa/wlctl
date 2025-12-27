@@ -42,6 +42,13 @@ You can install `wlctl` from [crates.io](https://crates.io/crates/wlctl)
 ```shell
 cargo install wlctl
 ```
+## Arch Linux (AUR)
+
+`wlctl-bin` is available on the Arch User Repository.
+
+```bash
+yay -S wlctl-bin
+```
 
 ### ⚒️ Build from source
 
