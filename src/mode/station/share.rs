@@ -1,6 +1,7 @@
 use anyhow::Result;
 use qrcode::QrCode;
-use std::{cmp, fs};
+use std::cmp;
+use std::sync::Arc;
 use tui_qrcode::{Colors, QrCodeWidget};
 
 use ratatui::{
@@ -11,6 +12,8 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Clear},
 };
 
+use crate::nm::NMClient;
+
 #[derive(Clone)]
 pub struct Share {
     pub qr_code: QrCode,
@@ -19,46 +22,15 @@ pub struct Share {
 }
 
 impl Share {
-    pub fn new(network_name: String) -> Result<Self> {
-        // NetworkManager stores connections in /etc/NetworkManager/system-connections/
-        // Files are named <connection-id>.nmconnection
-        let nm_path = format!(
-            "/etc/NetworkManager/system-connections/{}.nmconnection",
-            network_name
-        );
-
-        let content = fs::read_to_string(&nm_path).or_else(|_| {
-            // Try alternative naming conventions
-            // NetworkManager may encode special characters
-            let escaped_name = network_name.replace(' ', "_");
-            fs::read_to_string(format!(
-                "/etc/NetworkManager/system-connections/{}.nmconnection",
-                escaped_name
-            ))
-        })?;
-
-        // Parse the NetworkManager connection file (INI-like format)
-        // Look for psk= in [wifi-security] section
-        let mut in_wifi_security = false;
-        let mut passphrase = None;
-
-        for line in content.lines() {
-            let line = line.trim();
-            if line == "[wifi-security]" {
-                in_wifi_security = true;
-                continue;
-            }
-            if line.starts_with('[') {
-                in_wifi_security = false;
-                continue;
-            }
-            if in_wifi_security && line.starts_with("psk=") {
-                passphrase = Some(line.trim_start_matches("psk=").to_string());
-                break;
-            }
-        }
-
-        let passphrase = passphrase
+    pub async fn new(
+        client: Arc<NMClient>,
+        connection_path: &str,
+        network_name: String,
+    ) -> Result<Self> {
+        // Get the password via D-Bus GetSecrets
+        let passphrase = client
+            .get_wifi_psk(connection_path)
+            .await?
             .ok_or_else(|| anyhow::anyhow!("No password found for network {}", network_name))?;
 
         let message = format!("WIFI:T:WPA;S:{network_name};P:{passphrase};;");
