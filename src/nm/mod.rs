@@ -290,12 +290,11 @@ impl NMClient {
             .get_connection_secrets(connection_path, "802-11-wireless-security")
             .await?;
 
-        if let Some(wifi_security) = secrets.get("802-11-wireless-security") {
-            if let Some(psk) = wifi_security.get("psk") {
+        if let Some(wifi_security) = secrets.get("802-11-wireless-security")
+            && let Some(psk) = wifi_security.get("psk") {
                 let psk_str: String = psk.try_clone()?.try_into()?;
                 return Ok(Some(psk_str));
             }
-        }
 
         Ok(None)
     }

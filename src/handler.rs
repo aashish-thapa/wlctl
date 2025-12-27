@@ -455,8 +455,8 @@ pub async fn handle_key_events(
                                                         SecurityType::WPA
                                                             | SecurityType::WPA2
                                                             | SecurityType::WPA3
-                                                    ) {
-                                                        if let Ok(share) = Share::new(
+                                                    )
+                                                        && let Ok(share) = Share::new(
                                                             network.client.clone(),
                                                             &network.connection_path,
                                                             network.name.clone(),
@@ -467,7 +467,6 @@ pub async fn handle_key_events(
                                                             app.focused_block =
                                                                 FocusedBlock::ShareNetwork;
                                                         }
-                                                    }
                                                 } else {
                                                     let (network, _) =
                                                         &station.known_networks[net_index];
@@ -477,9 +476,9 @@ pub async fn handle_key_events(
                                                         SecurityType::WPA
                                                             | SecurityType::WPA2
                                                             | SecurityType::WPA3
-                                                    ) {
-                                                        if let Some(known) = &network.known_network {
-                                                            if let Ok(share) = Share::new(
+                                                    )
+                                                        && let Some(known) = &network.known_network
+                                                            && let Ok(share) = Share::new(
                                                                 known.client.clone(),
                                                                 &known.connection_path,
                                                                 network.name.clone(),
@@ -490,8 +489,6 @@ pub async fn handle_key_events(
                                                                 app.focused_block =
                                                                     FocusedBlock::ShareNetwork;
                                                             }
-                                                        }
-                                                    }
                                                 }
                                             }
                                         }
