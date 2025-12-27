@@ -267,6 +267,39 @@ impl NMClient {
         Ok(proxy.call("GetSettings", &()).await?)
     }
 
+    /// Get connection secrets (passwords, etc.)
+    pub async fn get_connection_secrets(
+        &self,
+        connection_path: &str,
+        setting_name: &str,
+    ) -> Result<HashMap<String, HashMap<String, OwnedValue>>> {
+        let proxy = Proxy::new(
+            &self.connection,
+            NM_BUS_NAME,
+            connection_path,
+            "org.freedesktop.NetworkManager.Settings.Connection",
+        )
+        .await?;
+
+        Ok(proxy.call("GetSecrets", &(setting_name,)).await?)
+    }
+
+    /// Get WiFi PSK (password) for a connection
+    pub async fn get_wifi_psk(&self, connection_path: &str) -> Result<Option<String>> {
+        let secrets = self
+            .get_connection_secrets(connection_path, "802-11-wireless-security")
+            .await?;
+
+        if let Some(wifi_security) = secrets.get("802-11-wireless-security") {
+            if let Some(psk) = wifi_security.get("psk") {
+                let psk_str: String = psk.try_clone()?.try_into()?;
+                return Ok(Some(psk_str));
+            }
+        }
+
+        Ok(None)
+    }
+
     /// Get WiFi connection profiles
     #[allow(clippy::collapsible_if, clippy::map_flatten)]
     pub async fn get_wifi_connections(&self) -> Result<Vec<ConnectionInfo>> {
