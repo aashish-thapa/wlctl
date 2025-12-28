@@ -589,15 +589,16 @@ impl NMClient {
                 // Get the connection settings to check the type
                 if let Ok(settings) = self.get_connection_settings(&info.connection_path).await
                     && let Some(connection) = settings.get("connection")
-                        && let Some(conn_type) = connection.get("type") {
-                            let type_str: String = conn_type.try_clone()?.try_into()?;
-                            // 802-3-ethernet is the NetworkManager type for wired connections
-                            if type_str == "802-3-ethernet"
-                                && info.state == ActiveConnectionState::Activated
-                            {
-                                return Ok(true);
-                            }
-                        }
+                    && let Some(conn_type) = connection.get("type")
+                {
+                    let type_str: String = conn_type.try_clone()?.try_into()?;
+                    // 802-3-ethernet is the NetworkManager type for wired connections
+                    if type_str == "802-3-ethernet"
+                        && info.state == ActiveConnectionState::Activated
+                    {
+                        return Ok(true);
+                    }
+                }
             }
         }
 
