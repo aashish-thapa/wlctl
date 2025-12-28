@@ -167,6 +167,12 @@ You do not have the required permissions. Ensure you are part of the appropriate
                 app.focused_block = wlctl::app::FocusedBlock::RequestUsernameAndPassword
             }
 
+            Event::SpeedTestResult(result) => {
+                if let Some(station) = &mut app.device.station {
+                    station.speed_test = Some(result);
+                }
+            }
+
             _ => {}
         }
     }
