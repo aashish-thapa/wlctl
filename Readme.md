@@ -102,6 +102,10 @@ This will produce an executable file at `target/release/wlctl` that you can copy
 
 `p`: Share via QR Code.
 
+`Shift + s`: Speed test 
+> [!NOTE]
+> `speedtest-cli` is used. Install it with `pip install speedtest-cli`
+
 ### Access Point
 
 `n`: Start a new access point.
