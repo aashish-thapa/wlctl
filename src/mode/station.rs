@@ -527,19 +527,19 @@ impl Station {
                 // Don't show WiFi connected icon when Ethernet is the primary connection
                 if !is_ethernet
                     && let Some(connected_net) = &self.connected_network
-                        && connected_net.name == net.name {
-                            let row = vec![
-                                Line::from("󰖩 ").centered(),
-                                Line::from(known.name.clone()).centered(),
-                                Line::from(known.network_type.to_string()).centered(),
-                                Line::from(if known.is_hidden { "Yes" } else { "No" }).centered(),
-                                Line::from(if known.is_autoconnect { "Yes" } else { "No" })
-                                    .centered(),
-                                Line::from(signal_str).centered(),
-                            ];
+                    && connected_net.name == net.name
+                {
+                    let row = vec![
+                        Line::from("󰖩 ").centered(),
+                        Line::from(known.name.clone()).centered(),
+                        Line::from(known.network_type.to_string()).centered(),
+                        Line::from(if known.is_hidden { "Yes" } else { "No" }).centered(),
+                        Line::from(if known.is_autoconnect { "Yes" } else { "No" }).centered(),
+                        Line::from(signal_str).centered(),
+                    ];
 
-                            return Row::new(row);
-                        }
+                    return Row::new(row);
+                }
 
                 let row = vec![
                     Line::from("").centered(),
