@@ -6,6 +6,7 @@ use crossterm::event::{Event as CrosstermEvent, KeyEvent, MouseEvent};
 use futures::{FutureExt, StreamExt};
 use tokio::sync::mpsc;
 
+use crate::mode::station::speed_test::SpeedTest;
 use crate::notification::Notification;
 
 #[derive(Clone, Debug)]
@@ -23,6 +24,7 @@ pub enum Event {
     AuthReqKeyPassphrase(String),
     AuthReqUsernameAndPassword(String),
     UsernameAndPasswordSubmit,
+    SpeedTestResult(SpeedTest),
 }
 
 #[allow(dead_code)]
