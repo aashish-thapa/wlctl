@@ -61,7 +61,10 @@ impl Station {
         let state = StationState::from(device_state);
 
         // Check if Ethernet is connected
-        let is_ethernet_connected = client.has_active_ethernet_connection().await.unwrap_or(false);
+        let is_ethernet_connected = client
+            .has_active_ethernet_connection()
+            .await
+            .unwrap_or(false);
 
         // Get current connected network
         let connected_ssid = client.get_connected_ssid(&device_path).await?;
@@ -527,7 +530,8 @@ impl Station {
                                 Line::from(known.name.clone()).centered(),
                                 Line::from(known.network_type.to_string()).centered(),
                                 Line::from(if known.is_hidden { "Yes" } else { "No" }).centered(),
-                                Line::from(if known.is_autoconnect { "Yes" } else { "No" }).centered(),
+                                Line::from(if known.is_autoconnect { "Yes" } else { "No" })
+                                    .centered(),
                                 Line::from(signal_str).centered(),
                             ];
 
