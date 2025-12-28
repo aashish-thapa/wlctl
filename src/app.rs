@@ -25,6 +25,7 @@ pub enum FocusedBlock {
     RequestPassword,
     RequestUsernameAndPassword,
     ShareNetwork,
+    SpeedTest,
 }
 
 pub struct App {
