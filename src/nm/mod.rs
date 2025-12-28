@@ -580,6 +580,32 @@ impl NMClient {
         Ok(proxy.get_property("ActiveConnections").await?)
     }
 
+    /// Check if there's an active Ethernet connection
+    pub async fn has_active_ethernet_connection(&self) -> Result<bool> {
+        let active_connections = self.get_active_connections().await?;
+
+        for conn_path in active_connections {
+            if let Ok(info) = self.get_active_connection_info(conn_path.as_str()).await {
+                // Get the connection settings to check the type
+                if let Ok(settings) = self.get_connection_settings(&info.connection_path).await {
+                    if let Some(connection) = settings.get("connection") {
+                        if let Some(conn_type) = connection.get("type") {
+                            let type_str: String = conn_type.try_clone()?.try_into()?;
+                            // 802-3-ethernet is the NetworkManager type for wired connections
+                            if type_str == "802-3-ethernet"
+                                && info.state == ActiveConnectionState::Activated
+                            {
+                                return Ok(true);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(false)
+    }
+
     /// Get active connection info
     pub async fn get_active_connection_info(
         &self,
