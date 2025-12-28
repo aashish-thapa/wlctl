@@ -373,6 +373,19 @@ pub async fn handle_key_events(
                             app.focused_block = FocusedBlock::KnownNetworks;
                         }
                     }
+                    FocusedBlock::SpeedTest => {
+                        // Close speed test popup on Esc or any key when not running
+                        if key_event.code == KeyCode::Esc
+                            || station
+                                .speed_test
+                                .as_ref()
+                                .map(|s| !s.is_running)
+                                .unwrap_or(true)
+                        {
+                            station.speed_test = None;
+                            app.focused_block = FocusedBlock::KnownNetworks;
+                        }
+                    }
                     _ => {
                         match key_event.code {
                             KeyCode::Char('q') => {
@@ -554,9 +567,17 @@ pub async fn handle_key_events(
                                             if station.connected_network.is_some()
                                                 || station.is_ethernet_connected
                                             {
+                                                // Show loading popup
+                                                station.speed_test = Some(SpeedTest::new());
+                                                app.focused_block = FocusedBlock::SpeedTest;
+
+                                                // Run speed test in background
                                                 let sender_clone = sender.clone();
                                                 tokio::spawn(async move {
-                                                    SpeedTest::run(sender_clone).await;
+                                                    let result =
+                                                        SpeedTest::run(sender_clone.clone()).await;
+                                                    let _ = sender_clone
+                                                        .send(Event::SpeedTestResult(result));
                                                 });
                                             } else {
                                                 Notification::send(
