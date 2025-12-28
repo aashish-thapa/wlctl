@@ -957,5 +957,10 @@ impl Station {
         if let Some(share) = &self.share {
             share.render(frame);
         }
+
+        // Speed test
+        if let Some(speed_test) = &self.speed_test {
+            speed_test.render(frame);
+        }
     }
 }
