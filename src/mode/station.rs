@@ -3,6 +3,7 @@ pub mod auth;
 pub mod known_network;
 pub mod network;
 pub mod share;
+pub mod speed_test;
 
 use std::sync::Arc;
 
@@ -21,7 +22,7 @@ use crate::{
     config::Config,
     device::Device,
     event::Event,
-    mode::station::{known_network::KnownNetwork, share::Share},
+    mode::station::{known_network::KnownNetwork, share::Share, speed_test::SpeedTest},
     notification::{Notification, NotificationLevel},
 };
 
@@ -53,6 +54,7 @@ pub struct Station {
     pub show_unavailable_known_networks: bool,
     pub show_hidden_networks: bool,
     pub share: Option<Share>,
+    pub speed_test: Option<SpeedTest>,
 }
 
 impl Station {
@@ -173,6 +175,7 @@ impl Station {
             show_unavailable_known_networks: false,
             show_hidden_networks: false,
             share: None,
+            speed_test: None,
         })
     }
 
@@ -819,6 +822,9 @@ impl Station {
                             Span::from(config.station.known_network.toggle_autoconnect.to_string())
                                 .bold(),
                             Span::from(" Autoconnect"),
+                            Span::from(" | "),
+                            Span::from(config.station.known_network.speed_test.to_string()).bold(),
+                            Span::from(" Speed"),
                         ]),
                     ]
                 } else {
@@ -847,6 +853,9 @@ impl Station {
                         Span::from(" | "),
                         Span::from(config.station.known_network.share.to_string()).bold(),
                         Span::from(" Share"),
+                        Span::from(" | "),
+                        Span::from(config.station.known_network.speed_test.to_string()).bold(),
+                        Span::from(" Speed"),
                         Span::from(" | "),
                         Span::from("ctrl+r").bold(),
                         Span::from(" Switch Mode"),
