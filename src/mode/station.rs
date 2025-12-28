@@ -522,9 +522,9 @@ impl Station {
                 let signal_str = format!("{}%", signal_percent);
 
                 // Don't show WiFi connected icon when Ethernet is the primary connection
-                if !is_ethernet {
-                    if let Some(connected_net) = &self.connected_network {
-                        if connected_net.name == net.name {
+                if !is_ethernet
+                    && let Some(connected_net) = &self.connected_network
+                        && connected_net.name == net.name {
                             let row = vec![
                                 Line::from("󰖩 ").centered(),
                                 Line::from(known.name.clone()).centered(),
@@ -537,8 +537,6 @@ impl Station {
 
                             return Row::new(row);
                         }
-                    }
-                }
 
                 let row = vec![
                     Line::from("").centered(),
