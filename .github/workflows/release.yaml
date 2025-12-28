@@ -147,34 +147,20 @@ jobs:
     if: needs.check.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Update PKGBUILD version
+        run: |
+          sed -i "s/pkgver=.*/pkgver=${{ needs.check.outputs.version }}/" .github/aur/PKGBUILD
+
       - name: Publish wlctl-bin to AUR
         uses: KSXGitHub/github-actions-deploy-aur@v3.0.1
         with:
           pkgname: wlctl-bin
-          pkgbuild: |
-            pkgname=wlctl-bin
-            _pkgname=wlctl
-            pkgver=${{ needs.check.outputs.version }}
-            pkgrel=1
-            pkgdesc="TUI for managing WiFi using NetworkManager (a fork of impala)"
-            arch=("x86_64")
-            url="https://github.com/aashish-thapa/wlctl"
-            license=("GPL3")
-            depends=("networkmanager")
-            conflicts=("wlctl")
-            provides=("wlctl")
-            options=(!strip)
-
-            source=(
-              "wlctl::https://github.com/aashish-thapa/wlctl/releases/download/v\${pkgver}/wlctl-x86_64-unknown-linux-musl"
-            )
-
-            sha256sums=('SKIP')
-
-            package() {
-              install -Dm755 wlctl "\${pkgdir}/usr/bin/wlctl"
-            }
+          pkgbuild: .github/aur/PKGBUILD
           commit_username: Aashish Thapa
           commit_email: ${{ secrets.AUR_EMAIL }}
           ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
           commit_message: "Update to v${{ needs.check.outputs.version }}"
+          updpkgsums: true
