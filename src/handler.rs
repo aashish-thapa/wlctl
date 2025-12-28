@@ -7,6 +7,7 @@ use crate::device::Device;
 use crate::event::Event;
 use crate::mode::ap::APFocusedSection;
 use crate::mode::station::share::Share;
+use crate::mode::station::speed_test::SpeedTest;
 use crate::nm::{Mode, SecurityType};
 use crate::notification::{self, Notification};
 
@@ -543,6 +544,27 @@ pub async fn handle_key_events(
                                         {
                                             station.show_unavailable_known_networks =
                                                 !station.show_unavailable_known_networks;
+                                        }
+
+                                        // Speed test
+                                        KeyCode::Char(c)
+                                            if c == config.station.known_network.speed_test =>
+                                        {
+                                            // Only run speed test if connected
+                                            if station.connected_network.is_some()
+                                                || station.is_ethernet_connected
+                                            {
+                                                let sender_clone = sender.clone();
+                                                tokio::spawn(async move {
+                                                    SpeedTest::run(sender_clone).await;
+                                                });
+                                            } else {
+                                                Notification::send(
+                                                    "Not connected to any network".to_string(),
+                                                    notification::NotificationLevel::Warning,
+                                                    &sender,
+                                                )?;
+                                            }
                                         }
 
                                         // Connect/Disconnect
