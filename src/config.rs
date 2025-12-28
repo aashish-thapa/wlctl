@@ -91,6 +91,8 @@ pub struct KnownNetwork {
     pub toggle_autoconnect: char,
     pub show_all: char,
     pub share: char,
+    #[serde(default = "default_station_speed_test")]
+    pub speed_test: char,
 }
 
 impl Default for KnownNetwork {
@@ -100,8 +102,13 @@ impl Default for KnownNetwork {
             toggle_autoconnect: 't',
             show_all: 'a',
             share: 'p',
+            speed_test: 'S',
         }
     }
+}
+
+fn default_station_speed_test() -> char {
+    'S'
 }
 
 fn default_station_remove_known_network() -> char {
