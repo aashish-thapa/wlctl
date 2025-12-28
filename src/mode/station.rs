@@ -42,6 +42,7 @@ pub struct Station {
     pub state: StationState,
     pub is_scanning: bool,
     pub connected_network: Option<Network>,
+    pub is_ethernet_connected: bool,
     pub new_networks: Vec<(Network, i16)>,
     pub new_hidden_networks: Vec<HiddenNetwork>,
     pub known_networks: Vec<(Network, i16)>,
@@ -58,6 +59,9 @@ impl Station {
     pub async fn new(client: Arc<NMClient>, device_path: String) -> Result<Self> {
         let device_state = client.get_device_state(&device_path).await?;
         let state = StationState::from(device_state);
+
+        // Check if Ethernet is connected
+        let is_ethernet_connected = client.has_active_ethernet_connection().await.unwrap_or(false);
 
         // Get current connected network
         let connected_ssid = client.get_connected_ssid(&device_path).await?;
@@ -155,6 +159,7 @@ impl Station {
             state,
             is_scanning: false,
             connected_network,
+            is_ethernet_connected,
             new_networks,
             new_hidden_networks: Vec::new(), // NetworkManager doesn't list hidden networks separately
             known_networks,
@@ -185,6 +190,13 @@ impl Station {
     pub async fn refresh(&mut self) -> Result<()> {
         let device_state = self.client.get_device_state(&self.device_path).await?;
         self.state = StationState::from(device_state);
+
+        // Check if Ethernet is connected
+        self.is_ethernet_connected = self
+            .client
+            .has_active_ethernet_connection()
+            .await
+            .unwrap_or(false);
 
         // Get current connected network
         let connected_ssid = self.client.get_connected_ssid(&self.device_path).await?;
@@ -497,6 +509,7 @@ impl Station {
         //
         // Known networks
         //
+        let is_ethernet = self.is_ethernet_connected;
         let mut rows: Vec<Row> = self
             .known_networks
             .iter()
@@ -505,44 +518,49 @@ impl Station {
                 let signal_percent = (*signal / 100).clamp(0, 100);
                 let signal_str = format!("{}%", signal_percent);
 
-                if let Some(connected_net) = &self.connected_network {
-                    if connected_net.name == net.name {
-                        let row = vec![
-                            Line::from("󰖩 ").centered(),
-                            Line::from(known.name.clone()).centered(),
-                            Line::from(known.network_type.to_string()).centered(),
-                            Line::from(if known.is_hidden { "Yes" } else { "No" }).centered(),
-                            Line::from(if known.is_autoconnect { "Yes" } else { "No" }).centered(),
-                            Line::from(signal_str).centered(),
-                        ];
+                // Don't show WiFi connected icon when Ethernet is the primary connection
+                if !is_ethernet {
+                    if let Some(connected_net) = &self.connected_network {
+                        if connected_net.name == net.name {
+                            let row = vec![
+                                Line::from("󰖩 ").centered(),
+                                Line::from(known.name.clone()).centered(),
+                                Line::from(known.network_type.to_string()).centered(),
+                                Line::from(if known.is_hidden { "Yes" } else { "No" }).centered(),
+                                Line::from(if known.is_autoconnect { "Yes" } else { "No" }).centered(),
+                                Line::from(signal_str).centered(),
+                            ];
 
-                        Row::new(row)
-                    } else {
-                        let row = vec![
-                            Line::from(""),
-                            Line::from(known.name.clone()).centered(),
-                            Line::from(known.network_type.to_string()).centered(),
-                            Line::from(if known.is_hidden { "Yes" } else { "No" }).centered(),
-                            Line::from(if known.is_autoconnect { "Yes" } else { "No" }).centered(),
-                            Line::from(signal_str).centered(),
-                        ];
-
-                        Row::new(row)
+                            return Row::new(row);
+                        }
                     }
-                } else {
-                    let row = vec![
-                        Line::from("").centered(),
-                        Line::from(known.name.clone()).centered(),
-                        Line::from(known.network_type.to_string()).centered(),
-                        Line::from(if known.is_hidden { "Yes" } else { "No" }).centered(),
-                        Line::from(if known.is_autoconnect { "Yes" } else { "No" }).centered(),
-                        Line::from(signal_str).centered(),
-                    ];
-
-                    Row::new(row)
                 }
+
+                let row = vec![
+                    Line::from("").centered(),
+                    Line::from(known.name.clone()).centered(),
+                    Line::from(known.network_type.to_string()).centered(),
+                    Line::from(if known.is_hidden { "Yes" } else { "No" }).centered(),
+                    Line::from(if known.is_autoconnect { "Yes" } else { "No" }).centered(),
+                    Line::from(signal_str).centered(),
+                ];
+
+                Row::new(row)
             })
             .collect();
+
+        // Add Ethernet entry at the top when connected
+        if self.is_ethernet_connected {
+            let ethernet_row = Row::new(vec![
+                Line::from("󰈀 ").centered(),
+                Line::from("Ethernet").centered(),
+                Line::from("-").centered(),
+                Line::from("-").centered(),
+                Line::from("-").centered(),
+                Line::from("-").centered(),
+            ]);
+            rows.insert(0, ethernet_row);
+        }
 
         if self.show_unavailable_known_networks {
             self.unavailable_known_networks.iter().for_each(|net| {
