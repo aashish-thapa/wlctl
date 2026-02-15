@@ -1,6 +1,6 @@
 [package]
 name = "wlctl"
-version = "0.1.4"
+version = "0.1.5"
 authors = ["Aashish Thapa"]
 license = "GPL-3.0"
 edition = "2024"
