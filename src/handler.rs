@@ -247,11 +247,12 @@ pub async fn handle_key_events(
                             let ssid: String = app.auth.hidden.ssid.value().into();
                             if !ssid.is_empty() {
                                 let security = app.auth.hidden.security;
-                                let password: Option<String> = if app.auth.hidden.requires_password() {
-                                    Some(app.auth.hidden.password.value().into())
-                                } else {
-                                    None
-                                };
+                                let password: Option<String> =
+                                    if app.auth.hidden.requires_password() {
+                                        Some(app.auth.hidden.password.value().into())
+                                    } else {
+                                        None
+                                    };
 
                                 let station_client = station.client.clone();
                                 let device_path = station.device_path.clone();
@@ -294,7 +295,9 @@ pub async fn handle_key_events(
                         }
 
                         KeyCode::Left | KeyCode::Right => {
-                            if app.auth.hidden.focused_field == crate::mode::station::auth::hidden::HiddenField::Security {
+                            if app.auth.hidden.focused_field
+                                == crate::mode::station::auth::hidden::HiddenField::Security
+                            {
                                 app.auth.hidden.cycle_security();
                                 // If switched to Open while on Password field, move back
                             }
@@ -309,23 +312,21 @@ pub async fn handle_key_events(
                             app.auth.hidden.show_password = !app.auth.hidden.show_password;
                         }
 
-                        _ => {
-                            match app.auth.hidden.focused_field {
-                                crate::mode::station::auth::hidden::HiddenField::Ssid => {
-                                    app.auth
-                                        .hidden
-                                        .ssid
-                                        .handle_event(&crossterm::event::Event::Key(key_event));
-                                }
-                                crate::mode::station::auth::hidden::HiddenField::Password => {
-                                    app.auth
-                                        .hidden
-                                        .password
-                                        .handle_event(&crossterm::event::Event::Key(key_event));
-                                }
-                                _ => {}
+                        _ => match app.auth.hidden.focused_field {
+                            crate::mode::station::auth::hidden::HiddenField::Ssid => {
+                                app.auth
+                                    .hidden
+                                    .ssid
+                                    .handle_event(&crossterm::event::Event::Key(key_event));
                             }
-                        }
+                            crate::mode::station::auth::hidden::HiddenField::Password => {
+                                app.auth
+                                    .hidden
+                                    .password
+                                    .handle_event(&crossterm::event::Event::Key(key_event));
+                            }
+                            _ => {}
+                        },
                     },
 
                     FocusedBlock::PskAuthKey => match key_event.code {
