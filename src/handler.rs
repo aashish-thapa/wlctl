@@ -8,6 +8,7 @@ use crate::event::Event;
 use crate::mode::ap::APFocusedSection;
 use crate::mode::station::share::Share;
 use crate::mode::station::speed_test::SpeedTest;
+use crate::mode::station::KnownNetworkSelection;
 use crate::nm::{Mode, SecurityType};
 use crate::notification::{self, Notification};
 
@@ -65,77 +66,30 @@ pub async fn toggle_connect(app: &mut App, sender: UnboundedSender<Event>) -> Re
                     }
                 }
             }
-            FocusedBlock::KnownNetworks => match &station.connected_network {
-                Some(connected_net) => {
-                    if let Some(selected_net_index) = station.known_networks_state.selected() {
-                        let ethernet_offset =
-                            if station.is_ethernet_connected { 1 } else { 0 };
+            FocusedBlock::KnownNetworks => {
+                if let Some(KnownNetworkSelection::Network(data_index)) =
+                    station.resolve_known_selection()
+                {
+                    let (selected_net, _) = &station.known_networks[data_index];
 
-                        if selected_net_index < ethernet_offset {
-                            // Ethernet row selected — no-op
-                            return Ok(());
-                        }
+                    let is_connected = station
+                        .connected_network
+                        .as_ref()
+                        .is_some_and(|c| c.name == selected_net.name);
 
-                        let data_index = selected_net_index - ethernet_offset;
-
-                        if data_index >= station.known_networks.len() {
-                            // Can not connect to unavailable network
-                            return Ok(());
-                        }
-
-                        let (selected_net, _signal) = &station.known_networks[data_index];
-
-                        if selected_net.name == connected_net.name {
+                    if is_connected {
+                        station.disconnect(sender.clone()).await?;
+                    } else {
+                        let (net, _) = station.known_networks[data_index].clone();
+                        if station.connected_network.is_some() {
                             station.disconnect(sender.clone()).await?;
-                        } else {
-                            let net_index = station
-                                .known_networks
-                                .iter()
-                                .position(|(n, _s)| n.name == selected_net.name);
-
-                            if let Some(index) = net_index {
-                                let (net, _) = station.known_networks[index].clone();
-                                station.disconnect(sender.clone()).await?;
-                                tokio::spawn(async move {
-                                    // Known networks already have saved credentials
-                                    let _ = net.connect(sender.clone(), None).await;
-                                });
-                            }
                         }
+                        tokio::spawn(async move {
+                            let _ = net.connect(sender.clone(), None).await;
+                        });
                     }
                 }
-                None => {
-                    if let Some(selected_net_index) = station.known_networks_state.selected() {
-                        let ethernet_offset =
-                            if station.is_ethernet_connected { 1 } else { 0 };
-
-                        if selected_net_index < ethernet_offset {
-                            // Ethernet row selected — no-op
-                            return Ok(());
-                        }
-
-                        let data_index = selected_net_index - ethernet_offset;
-
-                        if data_index >= station.known_networks.len() {
-                            // Can not connect to unavailable network
-                            return Ok(());
-                        }
-                        let (selected_net, _signal) = &station.known_networks[data_index];
-                        let net_index = station
-                            .known_networks
-                            .iter()
-                            .position(|(n, _s)| n.name == selected_net.name);
-
-                        if let Some(index) = net_index {
-                            let (net, _) = station.known_networks[index].clone();
-                            tokio::spawn(async move {
-                                // Known networks already have saved credentials
-                                let _ = net.connect(sender.clone(), None).await;
-                            });
-                        }
-                    }
-                }
-            },
+            }
             _ => {}
         }
     }
@@ -581,28 +535,10 @@ pub async fn handle_key_events(
                                         KeyCode::Char(c)
                                             if c == config.station.known_network.share =>
                                         {
-                                            if let Some(net_index) =
-                                                station.known_networks_state.selected()
-                                            {
-                                                let ethernet_offset =
-                                                    if station.is_ethernet_connected {
-                                                        1
-                                                    } else {
-                                                        0
-                                                    };
-
-                                                if net_index < ethernet_offset {
-                                                    // Ethernet row — no-op
-                                                } else if net_index - ethernet_offset
-                                                    >= station.known_networks.len()
-                                                {
-                                                    let index = (net_index - ethernet_offset)
-                                                        .saturating_sub(
-                                                            station.known_networks.len(),
-                                                        );
+                                            match station.resolve_known_selection() {
+                                                Some(KnownNetworkSelection::Unavailable(index)) => {
                                                     let network =
                                                         &station.unavailable_known_networks[index];
-                                                    // Check if it's a PSK network (WPA/WPA2/WPA3)
                                                     if matches!(
                                                         network.network_type,
                                                         SecurityType::WPA
@@ -619,12 +555,12 @@ pub async fn handle_key_events(
                                                         app.focused_block =
                                                             FocusedBlock::ShareNetwork;
                                                     }
-                                                } else {
-                                                    let data_index =
-                                                        net_index - ethernet_offset;
+                                                }
+                                                Some(KnownNetworkSelection::Network(
+                                                    data_index,
+                                                )) => {
                                                     let (network, _) =
                                                         &station.known_networks[data_index];
-                                                    // Check if it's a PSK network (WPA/WPA2/WPA3)
                                                     if matches!(
                                                         network.network_type,
                                                         SecurityType::WPA
@@ -643,44 +579,29 @@ pub async fn handle_key_events(
                                                             FocusedBlock::ShareNetwork;
                                                     }
                                                 }
+                                                _ => {}
                                             }
                                         }
                                         // Remove a known network
                                         KeyCode::Char(c)
                                             if c == config.station.known_network.remove =>
                                         {
-                                            if let Some(net_index) =
-                                                station.known_networks_state.selected()
-                                            {
-                                                let ethernet_offset =
-                                                    if station.is_ethernet_connected {
-                                                        1
-                                                    } else {
-                                                        0
-                                                    };
-
-                                                if net_index < ethernet_offset {
-                                                    // Ethernet row — no-op
-                                                } else if net_index - ethernet_offset
-                                                    >= station.known_networks.len()
-                                                {
-                                                    let index = (net_index - ethernet_offset)
-                                                        .saturating_sub(
-                                                            station.known_networks.len(),
-                                                        );
+                                            match station.resolve_known_selection() {
+                                                Some(KnownNetworkSelection::Unavailable(index)) => {
                                                     let network =
                                                         &station.unavailable_known_networks[index];
                                                     network.forget(sender.clone()).await?;
-                                                } else {
-                                                    let data_index =
-                                                        net_index - ethernet_offset;
-                                                    let (net, _signal) =
+                                                }
+                                                Some(KnownNetworkSelection::Network(
+                                                    data_index,
+                                                )) => {
+                                                    let (net, _) =
                                                         &station.known_networks[data_index];
-
                                                     if let Some(known_net) = &net.known_network {
                                                         known_net.forget(sender.clone()).await?;
                                                     }
                                                 }
+                                                _ => {}
                                             }
                                         }
 
@@ -691,24 +612,12 @@ pub async fn handle_key_events(
                                                 .known_network
                                                 .toggle_autoconnect =>
                                         {
-                                            let ethernet_offset =
-                                                if station.is_ethernet_connected {
-                                                    1
-                                                } else {
-                                                    0
-                                                };
-
-                                            if let Some(net_index) =
-                                                station.known_networks_state.selected()
-                                                && net_index >= ethernet_offset
-                                                && net_index - ethernet_offset
-                                                    < station.known_networks.len()
+                                            if let Some(KnownNetworkSelection::Network(
+                                                data_index,
+                                            )) = station.resolve_known_selection()
                                             {
-                                                let data_index =
-                                                    net_index - ethernet_offset;
                                                 let (net, _) =
                                                     &mut station.known_networks[data_index];
-
                                                 if let Some(known_net) = &mut net.known_network {
                                                     known_net
                                                         .toggle_autoconnect(sender.clone())
@@ -761,55 +670,26 @@ pub async fn handle_key_events(
 
                                         // Scroll down
                                         KeyCode::Char('j') | KeyCode::Down => {
-                                            let ethernet_offset =
-                                                if station.is_ethernet_connected {
-                                                    1
-                                                } else {
-                                                    0
-                                                };
-                                            let total_rows = ethernet_offset
-                                                + station.known_networks.len()
-                                                + if station.show_unavailable_known_networks {
-                                                    station.unavailable_known_networks.len()
-                                                } else {
-                                                    0
-                                                };
-
-                                            if total_rows > 0 {
+                                            let total = station.known_networks_total_rows();
+                                            if total > 0 {
                                                 let i =
                                                     match station.known_networks_state.selected() {
                                                         Some(i) => {
-                                                            let limit = total_rows - 1;
-                                                            if i < limit { i + 1 } else { i }
+                                                            if i < total - 1 { i + 1 } else { i }
                                                         }
                                                         None => 0,
                                                     };
-
                                                 station.known_networks_state.select(Some(i));
                                             }
                                         }
                                         KeyCode::Char('k') | KeyCode::Up => {
-                                            let ethernet_offset =
-                                                if station.is_ethernet_connected {
-                                                    1
-                                                } else {
-                                                    0
-                                                };
-                                            let total_rows = ethernet_offset
-                                                + station.known_networks.len()
-                                                + if station.show_unavailable_known_networks {
-                                                    station.unavailable_known_networks.len()
-                                                } else {
-                                                    0
-                                                };
-
-                                            if total_rows > 0 {
+                                            let total = station.known_networks_total_rows();
+                                            if total > 0 {
                                                 let i =
                                                     match station.known_networks_state.selected() {
                                                         Some(i) => i.saturating_sub(1),
                                                         None => 0,
                                                     };
-
                                                 station.known_networks_state.select(Some(i));
                                             }
                                         }
