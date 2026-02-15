@@ -46,11 +46,20 @@ impl HiddenSsidDialog {
         self.show_password = true;
     }
 
-    pub fn cycle_security(&mut self) {
+    pub fn cycle_security_next(&mut self) {
         self.security = match self.security {
             SecurityType::Open => SecurityType::WPA2,
             SecurityType::WPA2 => SecurityType::WPA3,
             SecurityType::WPA3 => SecurityType::Open,
+            _ => SecurityType::WPA2,
+        };
+    }
+
+    pub fn cycle_security_prev(&mut self) {
+        self.security = match self.security {
+            SecurityType::Open => SecurityType::WPA3,
+            SecurityType::WPA2 => SecurityType::Open,
+            SecurityType::WPA3 => SecurityType::WPA2,
             _ => SecurityType::WPA2,
         };
     }
@@ -270,9 +279,9 @@ impl HiddenSsidDialog {
             // Show password toggle
             let toggle = Paragraph::new(Line::from(vec![
                 if self.show_password {
-                    Span::raw("󰈈 Show")
+                    Span::raw("󰈈 Visible")
                 } else {
-                    Span::raw("󰈉 Hide")
+                    Span::raw("󰈉 Hidden")
                 },
                 Span::raw("  (ctrl+h to toggle)").dim(),
             ]));
