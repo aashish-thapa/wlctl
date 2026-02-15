@@ -26,6 +26,7 @@ pub enum FocusedBlock {
     RequestUsernameAndPassword,
     ShareNetwork,
     SpeedTest,
+    HiddenSsidInput,
 }
 
 pub struct App {
