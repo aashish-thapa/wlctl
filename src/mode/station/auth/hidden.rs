@@ -175,11 +175,13 @@ impl HiddenSsidDialog {
         } else {
             Style::default().fg(Color::Gray).bg(Color::DarkGray)
         };
-        let ssid_input = Paragraph::new(if ssid_str.is_empty() && self.focused_field != HiddenField::Ssid {
-            Line::from(Span::raw("Network name").dim())
-        } else {
-            Line::from(ssid_str.clone())
-        })
+        let ssid_input = Paragraph::new(
+            if ssid_str.is_empty() && self.focused_field != HiddenField::Ssid {
+                Line::from(Span::raw("Network name").dim())
+            } else {
+                Line::from(ssid_str.clone())
+            },
+        )
         .style(ssid_style);
         frame.render_widget(ssid_input, inner[1]);
 
@@ -255,11 +257,13 @@ impl HiddenSsidDialog {
             } else {
                 Style::default().fg(Color::Gray).bg(Color::DarkGray)
             };
-            let password_input = Paragraph::new(if password_str.is_empty() && self.focused_field != HiddenField::Password {
-                Line::from(Span::raw("Enter password").dim())
-            } else {
-                Line::from(password_str.clone())
-            })
+            let password_input = Paragraph::new(
+                if password_str.is_empty() && self.focused_field != HiddenField::Password {
+                    Line::from(Span::raw("Enter password").dim())
+                } else {
+                    Line::from(password_str.clone())
+                },
+            )
             .style(password_style);
             frame.render_widget(password_input, inner[7]);
 
@@ -308,14 +312,12 @@ impl HiddenSsidDialog {
         // Set cursor on active input field
         match self.focused_field {
             HiddenField::Ssid => {
-                let cursor_x =
-                    inner[1].x + self.ssid.visual_cursor().min(ssid_str.len()) as u16;
+                let cursor_x = inner[1].x + self.ssid.visual_cursor().min(ssid_str.len()) as u16;
                 frame.set_cursor_position((cursor_x, inner[1].y));
             }
             HiddenField::Password if has_password => {
                 let pwd_len = self.password.value().len();
-                let cursor_x =
-                    inner[7].x + self.password.visual_cursor().min(pwd_len) as u16;
+                let cursor_x = inner[7].x + self.password.visual_cursor().min(pwd_len) as u16;
                 frame.set_cursor_position((cursor_x, inner[7].y));
             }
             _ => {}
