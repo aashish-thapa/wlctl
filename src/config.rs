@@ -118,12 +118,21 @@ fn default_station_remove_known_network() -> char {
 #[derive(Deserialize, Debug)]
 pub struct NewNetwork {
     pub show_all: char,
+    #[serde(default = "default_connect_hidden")]
+    pub connect_hidden: char,
 }
 
 impl Default for NewNetwork {
     fn default() -> Self {
-        Self { show_all: 'a' }
+        Self {
+            show_all: 'a',
+            connect_hidden: 'h',
+        }
     }
+}
+
+fn default_connect_hidden() -> char {
+    'h'
 }
 
 // Access Point
