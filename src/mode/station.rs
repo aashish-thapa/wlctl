@@ -179,19 +179,6 @@ impl Station {
         })
     }
 
-    pub async fn connect_hidden_network(
-        &self,
-        _ssid: String,
-        _password: Option<&str>,
-    ) -> Result<()> {
-        // For hidden networks, we need to create a connection with the hidden flag
-        // This is handled by add_and_activate_connection with special settings
-        // For now, we'll return an error - full hidden network support needs more work
-        Err(anyhow::anyhow!(
-            "Hidden network connection not yet implemented for NetworkManager"
-        ))
-    }
-
     #[allow(clippy::collapsible_if)]
     pub async fn refresh(&mut self) -> Result<()> {
         let device_state = self.client.get_device_state(&self.device_path).await?;
@@ -872,6 +859,10 @@ impl Station {
                             Span::from("󱁐  or ↵ ").bold(),
                             Span::from(" Connect"),
                             Span::from(" | "),
+                            Span::from(config.station.new_network.connect_hidden.to_string())
+                                .bold(),
+                            Span::from(" Hidden"),
+                            Span::from(" | "),
                             Span::from(config.station.start_scanning.to_string()).bold(),
                             Span::from(" Scan"),
                         ]),
@@ -899,6 +890,9 @@ impl Station {
                         Span::from(" | "),
                         Span::from("󱁐  or ↵ ").bold(),
                         Span::from(" Connect"),
+                        Span::from(" | "),
+                        Span::from(config.station.new_network.connect_hidden.to_string()).bold(),
+                        Span::from(" Hidden"),
                         Span::from(" | "),
                         Span::from(config.station.new_network.show_all.to_string()).bold(),
                         Span::from(" Show All"),
