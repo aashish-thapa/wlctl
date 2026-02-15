@@ -242,6 +242,92 @@ pub async fn handle_key_events(
         Mode::Station => {
             if let Some(station) = &mut app.device.station {
                 match app.focused_block {
+                    FocusedBlock::HiddenSsidInput => match key_event.code {
+                        KeyCode::Enter => {
+                            let ssid: String = app.auth.hidden.ssid.value().into();
+                            if !ssid.is_empty() {
+                                let security = app.auth.hidden.security;
+                                let password: Option<String> = if app.auth.hidden.requires_password() {
+                                    Some(app.auth.hidden.password.value().into())
+                                } else {
+                                    None
+                                };
+
+                                let station_client = station.client.clone();
+                                let device_path = station.device_path.clone();
+                                let sender_clone = sender.clone();
+                                app.auth.hidden.reset();
+                                app.focused_block = FocusedBlock::NewNetworks;
+                                tokio::spawn(async move {
+                                    let _ = station_client
+                                        .add_and_activate_hidden_connection(
+                                            &device_path,
+                                            &ssid,
+                                            security,
+                                            password.as_deref(),
+                                        )
+                                        .await
+                                        .map(|_| {
+                                            let _ = Notification::send(
+                                                format!("Connecting to hidden network: {}", ssid),
+                                                notification::NotificationLevel::Info,
+                                                &sender_clone,
+                                            );
+                                        })
+                                        .map_err(|e| {
+                                            let _ = Notification::send(
+                                                format!("Failed to connect to {}: {}", ssid, e),
+                                                notification::NotificationLevel::Error,
+                                                &sender_clone,
+                                            );
+                                        });
+                                });
+                            }
+                        }
+
+                        KeyCode::Tab => {
+                            app.auth.hidden.next_field();
+                        }
+
+                        KeyCode::BackTab => {
+                            app.auth.hidden.prev_field();
+                        }
+
+                        KeyCode::Left | KeyCode::Right => {
+                            if app.auth.hidden.focused_field == crate::mode::station::auth::hidden::HiddenField::Security {
+                                app.auth.hidden.cycle_security();
+                                // If switched to Open while on Password field, move back
+                            }
+                        }
+
+                        KeyCode::Esc => {
+                            app.auth.hidden.reset();
+                            app.focused_block = FocusedBlock::NewNetworks;
+                        }
+
+                        KeyCode::Char('h') if key_event.modifiers == KeyModifiers::CONTROL => {
+                            app.auth.hidden.show_password = !app.auth.hidden.show_password;
+                        }
+
+                        _ => {
+                            match app.auth.hidden.focused_field {
+                                crate::mode::station::auth::hidden::HiddenField::Ssid => {
+                                    app.auth
+                                        .hidden
+                                        .ssid
+                                        .handle_event(&crossterm::event::Event::Key(key_event));
+                                }
+                                crate::mode::station::auth::hidden::HiddenField::Password => {
+                                    app.auth
+                                        .hidden
+                                        .password
+                                        .handle_event(&crossterm::event::Event::Key(key_event));
+                                }
+                                _ => {}
+                            }
+                        }
+                    },
+
                     FocusedBlock::PskAuthKey => match key_event.code {
                         KeyCode::Enter => {
                             // Get the password before submit() resets it
@@ -640,6 +726,12 @@ pub async fn handle_key_events(
                                     {
                                         station.show_hidden_networks =
                                             !station.show_hidden_networks;
+                                    }
+                                    // Connect to hidden network
+                                    KeyCode::Char(c)
+                                        if c == config.station.new_network.connect_hidden =>
+                                    {
+                                        app.focused_block = FocusedBlock::HiddenSsidInput;
                                     }
                                     KeyCode::Enter | KeyCode::Char(' ') => {
                                         toggle_connect(app, sender).await?
