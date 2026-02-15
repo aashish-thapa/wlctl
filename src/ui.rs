@@ -38,6 +38,10 @@ pub fn render(app: &mut App, frame: &mut Frame) {
             app.adapter.render(frame, app.device.address.clone());
         }
 
+        if app.focused_block == FocusedBlock::HiddenSsidInput {
+            app.auth.hidden.render(frame);
+        }
+
         if app.agent.psk_required.load(Ordering::Relaxed) {
             app.focused_block = FocusedBlock::PskAuthKey;
 
