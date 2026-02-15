@@ -5,7 +5,7 @@
 
   [![CI](https://github.com/aashish-thapa/wlctl/actions/workflows/ci.yaml/badge.svg)](https://github.com/aashish-thapa/wlctl/actions/workflows/ci.yaml)
   [![Crates.io](https://img.shields.io/crates/v/wlctl.svg)](https://crates.io/crates/wlctl)
-  [![Downloads](https://img.shields.io/crates/d/wlctl.svg)](https://crates.io/crates/impala-nm)
+  [![Downloads](https://img.shields.io/crates/d/wlctl.svg)](https://crates.io/crates/wlctl)
   [![License](https://img.shields.io/crates/l/wlctl.svg)](https://github.com/aashish-thapa/wlctl/blob/main/LICENSE)
 </div>
 
