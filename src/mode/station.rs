@@ -156,6 +156,7 @@ impl Station {
     }
 
     /// Categorize visible APs into known networks, new networks, and the connected network.
+    #[allow(clippy::type_complexity)]
     fn categorize_networks(
         client: &Arc<NMClient>,
         device_path: &str,
@@ -225,15 +226,15 @@ impl Station {
         if !is_connected {
             return Ok(None);
         }
-        if let Some(ap_path) = client.get_active_access_point(device_path).await? {
-            if let Ok(ap_info) = client.get_access_point_info(ap_path.as_str()).await {
-                return Ok(Some(DiagnosticInfo {
-                    frequency: Some(ap_info.frequency),
-                    signal_strength: Some(ap_info.strength as i32),
-                    security: Some(ap_info.security.to_string()),
-                    ..Default::default()
-                }));
-            }
+        if let Some(ap_path) = client.get_active_access_point(device_path).await?
+            && let Ok(ap_info) = client.get_access_point_info(ap_path.as_str()).await
+        {
+            return Ok(Some(DiagnosticInfo {
+                frequency: Some(ap_info.frequency),
+                signal_strength: Some(ap_info.strength as i32),
+                security: Some(ap_info.security.to_string()),
+                ..Default::default()
+            }));
         }
         Ok(None)
     }
@@ -284,10 +285,10 @@ impl Station {
                 if let Some((refreshed_net, new_signal)) =
                     fresh.iter().find(|(n, _)| n.name == net.name)
                 {
-                    if let Some(known) = &mut net.known_network {
-                        if let Some(refreshed_known) = &refreshed_net.known_network {
-                            known.is_autoconnect = refreshed_known.is_autoconnect;
-                        }
+                    if let Some(known) = &mut net.known_network
+                        && let Some(refreshed_known) = &refreshed_net.known_network
+                    {
+                        known.is_autoconnect = refreshed_known.is_autoconnect;
                     }
                     *signal = *new_signal;
                 }
