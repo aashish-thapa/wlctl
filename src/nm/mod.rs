@@ -511,6 +511,87 @@ impl NMClient {
         Ok(result.1) // Return active connection path
     }
 
+    /// Connect to a hidden network (creates connection profile with hidden flag)
+    pub async fn add_and_activate_hidden_connection(
+        &self,
+        device_path: &str,
+        ssid: &str,
+        security: SecurityType,
+        password: Option<&str>,
+    ) -> Result<OwnedObjectPath> {
+        let proxy = Proxy::new(
+            &self.connection,
+            NM_BUS_NAME,
+            NM_PATH,
+            "org.freedesktop.NetworkManager",
+        )
+        .await?;
+
+        let mut connection_settings: HashMap<&str, HashMap<&str, Value>> = HashMap::new();
+
+        // Connection section
+        let mut conn: HashMap<&str, Value> = HashMap::new();
+        conn.insert("type", Value::from("802-11-wireless"));
+        conn.insert("id", Value::from(ssid));
+        connection_settings.insert("connection", conn);
+
+        // Wireless section with hidden flag
+        let mut wireless: HashMap<&str, Value> = HashMap::new();
+        wireless.insert("ssid", Value::from(ssid.as_bytes().to_vec()));
+        wireless.insert("hidden", Value::from(true));
+        connection_settings.insert("802-11-wireless", wireless);
+
+        // Security section (if needed)
+        if security != SecurityType::Open {
+            let mut sec: HashMap<&str, Value> = HashMap::new();
+            match security {
+                SecurityType::WEP => {
+                    sec.insert("key-mgmt", Value::from("none"));
+                    if let Some(pwd) = password {
+                        sec.insert("wep-key0", Value::from(pwd));
+                    }
+                }
+                SecurityType::WPA | SecurityType::WPA2 => {
+                    sec.insert("key-mgmt", Value::from("wpa-psk"));
+                    if let Some(pwd) = password {
+                        sec.insert("psk", Value::from(pwd));
+                    }
+                }
+                SecurityType::WPA3 => {
+                    sec.insert("key-mgmt", Value::from("sae"));
+                    if let Some(pwd) = password {
+                        sec.insert("psk", Value::from(pwd));
+                    }
+                }
+                _ => {}
+            }
+            connection_settings.insert("802-11-wireless-security", sec);
+        }
+
+        // IPv4 section (auto)
+        let mut ipv4: HashMap<&str, Value> = HashMap::new();
+        ipv4.insert("method", Value::from("auto"));
+        connection_settings.insert("ipv4", ipv4);
+
+        // IPv6 section (auto)
+        let mut ipv6: HashMap<&str, Value> = HashMap::new();
+        ipv6.insert("method", Value::from("auto"));
+        connection_settings.insert("ipv6", ipv6);
+
+        let result: (OwnedObjectPath, OwnedObjectPath) = proxy
+            .call(
+                "AddAndActivateConnection",
+                &(
+                    connection_settings,
+                    ObjectPath::try_from(device_path)?,
+                    ObjectPath::try_from("/")?,
+                ),
+            )
+            .await?;
+
+        Ok(result.1) // Return active connection path
+    }
+
     /// Disconnect from current network
     pub async fn disconnect_device(&self, device_path: &str) -> Result<()> {
         let proxy = Proxy::new(
