@@ -92,6 +92,10 @@ This will produce an executable file at `target/release/wlctl` that you can copy
 
 `Space or Enter`: Connect/Disconnect the network.
 
+### New Networks
+
+`h`: Connect to a hidden network.
+
 ### Known Networks
 
 `t`: Enable/Disable auto-connect.
@@ -131,6 +135,10 @@ stop = 'x'
 
 [station]
 toggle_scanning = "s"
+
+[station.new_network]
+show_all = "a"
+connect_hidden = "h"
 
 [station.known_network]
 toggle_autoconnect = "t"
