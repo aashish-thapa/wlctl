@@ -1,4 +1,5 @@
 pub mod entreprise;
+pub mod hidden;
 pub mod psk;
 
 use std::sync::Arc;
@@ -11,6 +12,7 @@ use crate::mode::station::auth::{
             username_and_password::RequestUsernameAndPassword,
         },
     },
+    hidden::HiddenSsidDialog,
     psk::Psk,
 };
 use crate::nm::NMClient;
@@ -18,6 +20,7 @@ use crate::nm::NMClient;
 #[derive(Debug, Default)]
 pub struct Auth {
     pub psk: Psk,
+    pub hidden: HiddenSsidDialog,
     pub eap: Option<WPAEntreprise>,
     pub request_key_passphrase: Option<RequestKeyPassphrase>,
     pub request_password: Option<RequestPassword>,
@@ -31,6 +34,7 @@ impl Auth {
 
     pub fn reset(&mut self) {
         self.psk = Psk::default();
+        self.hidden.reset();
         self.eap = None;
     }
 
