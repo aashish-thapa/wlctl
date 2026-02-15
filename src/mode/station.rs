@@ -88,8 +88,13 @@ impl Station {
         let visible_networks = client.get_visible_networks(&device_path).await?;
         let saved_connections = client.get_wifi_connections().await?;
 
-        let (new_networks, known_networks, connected_network) =
-            Self::categorize_networks(&client, &device_path, &visible_networks, &saved_connections, &connected_ssid);
+        let (new_networks, known_networks, connected_network) = Self::categorize_networks(
+            &client,
+            &device_path,
+            &visible_networks,
+            &saved_connections,
+            &connected_ssid,
+        );
 
         let unavailable_known_networks =
             Self::find_unavailable_networks(&client, &known_networks, saved_connections);
@@ -132,8 +137,13 @@ impl Station {
         let visible_networks = self.client.get_visible_networks(&self.device_path).await?;
         let saved_connections = self.client.get_wifi_connections().await?;
 
-        let (new_networks, known_networks, connected_network) =
-            Self::categorize_networks(&self.client, &self.device_path, &visible_networks, &saved_connections, &connected_ssid);
+        let (new_networks, known_networks, connected_network) = Self::categorize_networks(
+            &self.client,
+            &self.device_path,
+            &visible_networks,
+            &saved_connections,
+            &connected_ssid,
+        );
 
         self.update_network_list(
             &new_networks,
@@ -146,8 +156,12 @@ impl Station {
             Self::find_unavailable_networks(&self.client, &self.known_networks, saved_connections);
 
         self.connected_network = connected_network;
-        self.diagnostic =
-            Self::fetch_diagnostic(&self.client, &self.device_path, self.connected_network.is_some()).await?;
+        self.diagnostic = Self::fetch_diagnostic(
+            &self.client,
+            &self.device_path,
+            self.connected_network.is_some(),
+        )
+        .await?;
 
         Ok(())
     }
@@ -251,7 +265,9 @@ impl Station {
     ) {
         let current = get_list(self);
         let same_set = current.len() == fresh.len()
-            && current.iter().all(|(net, _)| fresh.iter().any(|(n, _)| n.name == net.name));
+            && current
+                .iter()
+                .all(|(net, _)| fresh.iter().any(|(n, _)| n.name == net.name));
 
         if same_set {
             current.iter_mut().for_each(|(net, signal)| {
@@ -269,7 +285,10 @@ impl Station {
     /// Update known network list, also syncing autoconnect status.
     fn update_known_network_list(&mut self, fresh: &[(Network, i16)]) {
         let same_set = self.known_networks.len() == fresh.len()
-            && self.known_networks.iter().all(|(net, _)| fresh.iter().any(|(n, _)| n.name == net.name));
+            && self
+                .known_networks
+                .iter()
+                .all(|(net, _)| fresh.iter().any(|(n, _)| n.name == net.name));
 
         if same_set {
             self.known_networks.iter_mut().for_each(|(net, signal)| {
