@@ -7,7 +7,7 @@ pub mod speed_test;
 
 use std::sync::Arc;
 
-use crate::nm::{DiagnosticInfo, NMClient, StationState};
+use crate::nm::{AccessPointInfo, ConnectionInfo, DiagnosticInfo, NMClient, StationState};
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Flex, Layout},
@@ -73,101 +73,29 @@ impl Station {
         let device_state = client.get_device_state(&device_path).await?;
         let state = StationState::from(device_state);
 
-        // Check if Ethernet is connected
         let is_ethernet_connected = client
             .has_active_ethernet_connection()
             .await
             .unwrap_or(false);
 
-        // Get current connected network
         let connected_ssid = client.get_connected_ssid(&device_path).await?;
 
-        // Get all visible access points
-        let visible_networks = client.get_visible_networks(&device_path).await?;
+        // Request a fresh scan so we get up-to-date AP data.
+        // This is non-blocking; NM populates APs asynchronously and
+        // the periodic refresh() tick will pick them up.
+        let _ = client.request_scan(&device_path).await;
 
-        // Get all saved WiFi connections
+        let visible_networks = client.get_visible_networks(&device_path).await?;
         let saved_connections = client.get_wifi_connections().await?;
 
-        // Build networks list
-        let mut new_networks: Vec<(Network, i16)> = Vec::new();
-        let mut known_networks: Vec<(Network, i16)> = Vec::new();
-        let mut connected_network: Option<Network> = None;
+        let (new_networks, known_networks, connected_network) =
+            Self::categorize_networks(&client, &device_path, &visible_networks, &saved_connections, &connected_ssid);
 
-        for ap_info in visible_networks {
-            let is_connected = Some(&ap_info.ssid) == connected_ssid.as_ref();
-            let signal = ap_info.strength as i16 * 100; // Convert 0-100 to match iwd format
+        let unavailable_known_networks =
+            Self::find_unavailable_networks(&client, &known_networks, saved_connections);
 
-            // Check if this network has a saved connection
-            let known_network = saved_connections
-                .iter()
-                .find(|conn| conn.ssid == ap_info.ssid)
-                .map(|conn| KnownNetwork::from_connection_info(client.clone(), conn.clone()));
-
-            let network = Network::from_access_point(
-                client.clone(),
-                device_path.clone(),
-                ap_info,
-                known_network.clone(),
-                is_connected,
-            );
-
-            if is_connected {
-                connected_network = Some(network.clone());
-            }
-
-            if known_network.is_some() {
-                known_networks.push((network, signal));
-            } else {
-                new_networks.push((network, signal));
-            }
-        }
-
-        // Get unavailable known networks (saved but not visible)
-        let visible_ssids: Vec<&str> = known_networks
-            .iter()
-            .map(|(n, _)| n.name.as_str())
-            .collect();
-
-        let unavailable_known_networks: Vec<KnownNetwork> = saved_connections
-            .into_iter()
-            .filter(|conn| !visible_ssids.contains(&conn.ssid.as_str()))
-            .map(|conn| KnownNetwork::from_connection_info(client.clone(), conn))
-            .collect();
-
-        let mut new_networks_state = TableState::default();
-        if new_networks.is_empty() {
-            new_networks_state.select(None);
-        } else {
-            new_networks_state.select(Some(0));
-        }
-
-        let mut known_networks_state = TableState::default();
-        if known_networks.is_empty() {
-            known_networks_state.select(None);
-        } else {
-            known_networks_state.select(Some(0));
-        }
-
-        // Get diagnostic info if connected
-        let diagnostic = if connected_network.is_some() {
-            // Try to get active AP info for diagnostics
-            if let Some(ap_path) = client.get_active_access_point(&device_path).await? {
-                if let Ok(ap_info) = client.get_access_point_info(ap_path.as_str()).await {
-                    Some(DiagnosticInfo {
-                        frequency: Some(ap_info.frequency),
-                        signal_strength: Some(ap_info.strength as i32),
-                        security: Some(ap_info.security.to_string()),
-                        ..Default::default()
-                    })
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        } else {
-            None
-        };
+        let diagnostic =
+            Self::fetch_diagnostic(&client, &device_path, connected_network.is_some()).await?;
 
         Ok(Self {
             client,
@@ -176,12 +104,12 @@ impl Station {
             is_scanning: false,
             connected_network,
             is_ethernet_connected,
+            new_networks_state: Self::table_state_for(&new_networks),
             new_networks,
-            new_hidden_networks: Vec::new(), // NetworkManager doesn't list hidden networks separately
+            new_hidden_networks: Vec::new(),
+            known_networks_state: Self::table_state_for(&known_networks),
             known_networks,
             unavailable_known_networks,
-            known_networks_state,
-            new_networks_state,
             diagnostic,
             show_unavailable_known_networks: false,
             show_hidden_networks: false,
@@ -190,28 +118,48 @@ impl Station {
         })
     }
 
-    #[allow(clippy::collapsible_if)]
     pub async fn refresh(&mut self) -> Result<()> {
         let device_state = self.client.get_device_state(&self.device_path).await?;
         self.state = StationState::from(device_state);
 
-        // Check if Ethernet is connected
         self.is_ethernet_connected = self
             .client
             .has_active_ethernet_connection()
             .await
             .unwrap_or(false);
 
-        // Get current connected network
         let connected_ssid = self.client.get_connected_ssid(&self.device_path).await?;
-
-        // Get all visible access points
         let visible_networks = self.client.get_visible_networks(&self.device_path).await?;
-
-        // Get all saved WiFi connections
         let saved_connections = self.client.get_wifi_connections().await?;
 
-        // Build networks list
+        let (new_networks, known_networks, connected_network) =
+            Self::categorize_networks(&self.client, &self.device_path, &visible_networks, &saved_connections, &connected_ssid);
+
+        self.update_network_list(
+            &new_networks,
+            |s| &mut s.new_networks,
+            |s| &mut s.new_networks_state,
+        );
+        self.update_known_network_list(&known_networks);
+
+        self.unavailable_known_networks =
+            Self::find_unavailable_networks(&self.client, &self.known_networks, saved_connections);
+
+        self.connected_network = connected_network;
+        self.diagnostic =
+            Self::fetch_diagnostic(&self.client, &self.device_path, self.connected_network.is_some()).await?;
+
+        Ok(())
+    }
+
+    /// Categorize visible APs into known networks, new networks, and the connected network.
+    fn categorize_networks(
+        client: &Arc<NMClient>,
+        device_path: &str,
+        visible_networks: &[AccessPointInfo],
+        saved_connections: &[ConnectionInfo],
+        connected_ssid: &Option<String>,
+    ) -> (Vec<(Network, i16)>, Vec<(Network, i16)>, Option<Network>) {
         let mut new_networks: Vec<(Network, i16)> = Vec::new();
         let mut known_networks: Vec<(Network, i16)> = Vec::new();
         let mut connected_network: Option<Network> = None;
@@ -223,12 +171,12 @@ impl Station {
             let known_network = saved_connections
                 .iter()
                 .find(|conn| conn.ssid == ap_info.ssid)
-                .map(|conn| KnownNetwork::from_connection_info(self.client.clone(), conn.clone()));
+                .map(|conn| KnownNetwork::from_connection_info(client.clone(), conn.clone()));
 
             let network = Network::from_access_point(
-                self.client.clone(),
-                self.device_path.clone(),
-                ap_info,
+                client.clone(),
+                device_path.to_string(),
+                ap_info.clone(),
                 known_network.clone(),
                 is_connected,
             );
@@ -244,31 +192,89 @@ impl Station {
             }
         }
 
-        // Update network lists, preserving selection if possible
-        if self.new_networks.len() == new_networks.len() {
-            // Just update signal strengths
-            self.new_networks.iter_mut().for_each(|(net, signal)| {
-                if let Some((_, new_signal)) = new_networks.iter().find(|(n, _)| n.name == net.name)
-                {
+        (new_networks, known_networks, connected_network)
+    }
+
+    /// Find saved connections that are not currently visible.
+    fn find_unavailable_networks(
+        client: &Arc<NMClient>,
+        known_networks: &[(Network, i16)],
+        saved_connections: Vec<ConnectionInfo>,
+    ) -> Vec<KnownNetwork> {
+        let visible_ssids: Vec<&str> = known_networks
+            .iter()
+            .map(|(n, _)| n.name.as_str())
+            .collect();
+
+        saved_connections
+            .into_iter()
+            .filter(|conn| !visible_ssids.contains(&conn.ssid.as_str()))
+            .map(|conn| KnownNetwork::from_connection_info(client.clone(), conn))
+            .collect()
+    }
+
+    /// Fetch diagnostic info for the active access point.
+    async fn fetch_diagnostic(
+        client: &NMClient,
+        device_path: &str,
+        is_connected: bool,
+    ) -> Result<Option<DiagnosticInfo>> {
+        if !is_connected {
+            return Ok(None);
+        }
+        if let Some(ap_path) = client.get_active_access_point(device_path).await? {
+            if let Ok(ap_info) = client.get_access_point_info(ap_path.as_str()).await {
+                return Ok(Some(DiagnosticInfo {
+                    frequency: Some(ap_info.frequency),
+                    signal_strength: Some(ap_info.strength as i32),
+                    security: Some(ap_info.security.to_string()),
+                    ..Default::default()
+                }));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Create a TableState with the first item selected if the list is non-empty.
+    fn table_state_for<T>(items: &[T]) -> TableState {
+        let mut state = TableState::default();
+        state.select(if items.is_empty() { None } else { Some(0) });
+        state
+    }
+
+    /// Update a network list, preserving selection when the same set of networks is present.
+    fn update_network_list(
+        &mut self,
+        fresh: &[(Network, i16)],
+        get_list: fn(&mut Self) -> &mut Vec<(Network, i16)>,
+        get_state: fn(&mut Self) -> &mut TableState,
+    ) {
+        let current = get_list(self);
+        let same_set = current.len() == fresh.len()
+            && current.iter().all(|(net, _)| fresh.iter().any(|(n, _)| n.name == net.name));
+
+        if same_set {
+            current.iter_mut().for_each(|(net, signal)| {
+                if let Some((_, new_signal)) = fresh.iter().find(|(n, _)| n.name == net.name) {
                     *signal = *new_signal;
                 }
             });
         } else {
-            let mut new_networks_state = TableState::default();
-            if new_networks.is_empty() {
-                new_networks_state.select(None);
-            } else {
-                new_networks_state.select(Some(0));
-            }
-            self.new_networks_state = new_networks_state;
-            self.new_networks = new_networks;
+            let state = get_state(self);
+            *state = Self::table_state_for(fresh);
+            *get_list(self) = fresh.to_vec();
         }
+    }
 
-        if self.known_networks.len() == known_networks.len() {
-            // Just update signal strengths and autoconnect status
+    /// Update known network list, also syncing autoconnect status.
+    fn update_known_network_list(&mut self, fresh: &[(Network, i16)]) {
+        let same_set = self.known_networks.len() == fresh.len()
+            && self.known_networks.iter().all(|(net, _)| fresh.iter().any(|(n, _)| n.name == net.name));
+
+        if same_set {
             self.known_networks.iter_mut().for_each(|(net, signal)| {
                 if let Some((refreshed_net, new_signal)) =
-                    known_networks.iter().find(|(n, _)| n.name == net.name)
+                    fresh.iter().find(|(n, _)| n.name == net.name)
                 {
                     if let Some(known) = &mut net.known_network {
                         if let Some(refreshed_known) = &refreshed_net.known_network {
@@ -279,52 +285,9 @@ impl Station {
                 }
             });
         } else {
-            let mut known_networks_state = TableState::default();
-            if known_networks.is_empty() {
-                known_networks_state.select(None);
-            } else {
-                known_networks_state.select(Some(0));
-            }
-            self.known_networks_state = known_networks_state;
-            self.known_networks = known_networks;
+            self.known_networks_state = Self::table_state_for(fresh);
+            self.known_networks = fresh.to_vec();
         }
-
-        // Update unavailable known networks
-        let visible_ssids: Vec<&str> = self
-            .known_networks
-            .iter()
-            .map(|(n, _)| n.name.as_str())
-            .collect();
-
-        self.unavailable_known_networks = saved_connections
-            .into_iter()
-            .filter(|conn| !visible_ssids.contains(&conn.ssid.as_str()))
-            .map(|conn| KnownNetwork::from_connection_info(self.client.clone(), conn))
-            .collect();
-
-        self.connected_network = connected_network;
-
-        // Update diagnostic info
-        if self.connected_network.is_some() {
-            if let Some(ap_path) = self
-                .client
-                .get_active_access_point(&self.device_path)
-                .await?
-            {
-                if let Ok(ap_info) = self.client.get_access_point_info(ap_path.as_str()).await {
-                    self.diagnostic = Some(DiagnosticInfo {
-                        frequency: Some(ap_info.frequency),
-                        signal_strength: Some(ap_info.strength as i32),
-                        security: Some(ap_info.security.to_string()),
-                        ..Default::default()
-                    });
-                }
-            }
-        } else {
-            self.diagnostic = None;
-        }
-
-        Ok(())
     }
 
     pub async fn scan(&mut self, sender: UnboundedSender<Event>) -> Result<()> {
