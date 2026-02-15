@@ -28,6 +28,17 @@ use crate::{
 
 use network::Network;
 
+/// Result of resolving the selected known networks table index,
+/// accounting for the ethernet row offset.
+pub enum KnownNetworkSelection {
+    /// The ethernet row is selected (no-op for most actions)
+    Ethernet,
+    /// A known (visible) network at the given data index
+    Network(usize),
+    /// An unavailable (saved but not visible) network at the given index
+    Unavailable(usize),
+}
+
 /// Hidden network representation for NetworkManager
 #[derive(Debug, Clone)]
 pub struct HiddenNetwork {
@@ -364,6 +375,40 @@ impl Station {
             }
         }
         Ok(())
+    }
+
+    /// Resolve the currently selected known networks table index to a typed selection,
+    /// accounting for the ethernet row offset and unavailable networks.
+    pub fn resolve_known_selection(&self) -> Option<KnownNetworkSelection> {
+        let selected = self.known_networks_state.selected()?;
+        let ethernet_offset = usize::from(self.is_ethernet_connected);
+
+        if selected < ethernet_offset {
+            return Some(KnownNetworkSelection::Ethernet);
+        }
+
+        let data_index = selected - ethernet_offset;
+        if data_index < self.known_networks.len() {
+            Some(KnownNetworkSelection::Network(data_index))
+        } else {
+            let unavail_index = data_index - self.known_networks.len();
+            if unavail_index < self.unavailable_known_networks.len() {
+                Some(KnownNetworkSelection::Unavailable(unavail_index))
+            } else {
+                None
+            }
+        }
+    }
+
+    /// Total number of rows in the known networks table (ethernet + known + unavailable).
+    pub fn known_networks_total_rows(&self) -> usize {
+        let ethernet_offset = usize::from(self.is_ethernet_connected);
+        let unavail = if self.show_unavailable_known_networks {
+            self.unavailable_known_networks.len()
+        } else {
+            0
+        };
+        ethernet_offset + self.known_networks.len() + unavail
     }
 
     pub fn render(
