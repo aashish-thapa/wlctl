@@ -674,13 +674,7 @@ pub async fn handle_key_events(
                                             if total > 0 {
                                                 let i =
                                                     match station.known_networks_state.selected() {
-                                                        Some(i) => {
-                                                            if i < total - 1 {
-                                                                i + 1
-                                                            } else {
-                                                                i
-                                                            }
-                                                        }
+                                                        Some(i) => (i + 1).min(total - 1),
                                                         None => 0,
                                                     };
                                                 station.known_networks_state.select(Some(i));
