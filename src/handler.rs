@@ -6,9 +6,9 @@ use crate::config::Config;
 use crate::device::Device;
 use crate::event::Event;
 use crate::mode::ap::APFocusedSection;
+use crate::mode::station::KnownNetworkSelection;
 use crate::mode::station::share::Share;
 use crate::mode::station::speed_test::SpeedTest;
-use crate::mode::station::KnownNetworkSelection;
 use crate::nm::{Mode, SecurityType};
 use crate::notification::{self, Notification};
 
@@ -675,7 +675,11 @@ pub async fn handle_key_events(
                                                 let i =
                                                     match station.known_networks_state.selected() {
                                                         Some(i) => {
-                                                            if i < total - 1 { i + 1 } else { i }
+                                                            if i < total - 1 {
+                                                                i + 1
+                                                            } else {
+                                                                i
+                                                            }
                                                         }
                                                         None => 0,
                                                     };
