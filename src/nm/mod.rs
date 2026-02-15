@@ -472,8 +472,14 @@ impl NMClient {
                         security.insert("wep-key0", Value::from(pwd));
                     }
                 }
-                SecurityType::WPA | SecurityType::WPA2 | SecurityType::WPA3 => {
+                SecurityType::WPA | SecurityType::WPA2 => {
                     security.insert("key-mgmt", Value::from("wpa-psk"));
+                    if let Some(pwd) = password {
+                        security.insert("psk", Value::from(pwd));
+                    }
+                }
+                SecurityType::WPA3 => {
+                    security.insert("key-mgmt", Value::from("sae"));
                     if let Some(pwd) = password {
                         security.insert("psk", Value::from(pwd));
                     }
