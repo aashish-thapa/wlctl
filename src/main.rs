@@ -178,6 +178,10 @@ You do not have the required permissions. Ensure you are part of the appropriate
                 }
             }
 
+            Event::DoctorCompleted(results) => {
+                app.doctor = Some(wlctl::doctor::DoctorModal::Ready(results));
+            }
+
             _ => {}
         }
     }
