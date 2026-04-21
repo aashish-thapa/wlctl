@@ -1,3 +1,5 @@
+use std::io::ErrorKind;
+
 use async_trait::async_trait;
 use tokio::fs;
 
@@ -25,13 +27,14 @@ impl DiagnosticCheck for DriverCheck {
                     .unwrap_or_else(|| "unknown".into());
                 Outcome::ok(format!("{} loaded", name))
             }
-            Err(_) => Outcome::fail(
+            Err(e) if e.kind() == ErrorKind::NotFound => Outcome::fail(
                 "no driver bound",
                 format!(
                     "No kernel driver for {}. Check `dmesg | grep -i {}` for firmware errors.",
                     ctx.interface, ctx.interface
                 ),
             ),
+            Err(e) => Outcome::skip(format!("could not read driver link: {}", e)),
         }
     }
 }
