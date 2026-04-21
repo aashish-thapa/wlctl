@@ -96,6 +96,22 @@ pub async fn toggle_connect(app: &mut App, sender: UnboundedSender<Event>) -> Re
     Ok(())
 }
 
+async fn start_doctor(app: &mut App, sender: UnboundedSender<Event>) {
+    use crate::doctor::{self, DoctorModal};
+
+    app.doctor = Some(DoctorModal::Running);
+    app.focused_block = FocusedBlock::Doctor;
+
+    let nm = app.client.clone();
+    let device_path = app.device.device_path.clone();
+    let interface = app.device.name.clone();
+
+    tokio::spawn(async move {
+        let results = doctor::check_now(nm, device_path, interface).await;
+        let _ = sender.send(Event::DoctorCompleted(results));
+    });
+}
+
 async fn toggle_device_power(sender: UnboundedSender<Event>, device: &Device) -> Result<()> {
     if device.is_powered {
         match device.power_off().await {
@@ -167,6 +183,24 @@ pub async fn handle_key_events(
 
             _ => {}
         }
+        return Ok(());
+    }
+
+    // Doctor modal captures all keys while open. Esc dismisses it.
+    if app.focused_block == FocusedBlock::Doctor {
+        if key_event.code == KeyCode::Esc {
+            app.doctor = None;
+            app.focused_block = FocusedBlock::Device;
+        }
+        return Ok(());
+    }
+
+    // Device-focus shortcut: run the doctor. Available in any power state.
+    if app.focused_block == FocusedBlock::Device
+        && let KeyCode::Char(c) = key_event.code
+        && c == config.device.doctor
+    {
+        start_doctor(app, sender).await;
         return Ok(());
     }
 
