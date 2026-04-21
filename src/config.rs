@@ -22,6 +22,9 @@ pub struct Config {
 
     #[serde(default)]
     pub ap: AccessPoint,
+
+    #[serde(default)]
+    pub captive_portal: CaptivePortal,
 }
 
 fn default_switch_mode() -> char {
@@ -172,6 +175,25 @@ fn default_ap_start() -> char {
 
 fn default_ap_stop() -> char {
     'x'
+}
+
+// Captive portal
+#[derive(Deserialize, Debug)]
+pub struct CaptivePortal {
+    #[serde(default = "default_captive_portal_auto_open")]
+    pub auto_open: bool,
+}
+
+impl Default for CaptivePortal {
+    fn default() -> Self {
+        Self {
+            auto_open: default_captive_portal_auto_open(),
+        }
+    }
+}
+
+fn default_captive_portal_auto_open() -> bool {
+    true
 }
 
 impl Config {
