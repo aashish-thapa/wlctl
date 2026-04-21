@@ -6,6 +6,7 @@ use crossterm::event::{Event as CrosstermEvent, KeyEvent, MouseEvent};
 use futures::{FutureExt, StreamExt};
 use tokio::sync::mpsc;
 
+use crate::doctor::CheckEntry;
 use crate::mode::station::speed_test::SpeedTest;
 use crate::notification::Notification;
 
@@ -25,6 +26,7 @@ pub enum Event {
     AuthReqUsernameAndPassword(String),
     UsernameAndPasswordSubmit,
     SpeedTestResult(SpeedTest),
+    DoctorCompleted(Vec<CheckEntry>),
 }
 
 #[allow(dead_code)]
