@@ -28,7 +28,7 @@ impl NMClient {
         }
 
         // Sort by signal strength (strongest first)
-        networks.sort_by(|a, b| b.strength.cmp(&a.strength));
+        networks.sort_by_key(|n| std::cmp::Reverse(n.strength));
 
         Ok(networks)
     }
