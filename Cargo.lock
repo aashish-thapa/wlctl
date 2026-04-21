@@ -2103,6 +2103,7 @@ version = "0.1.5"
 dependencies = [
  "anyhow",
  "async-channel",
+ "async-trait",
  "chrono",
  "clap",
  "crossterm 0.29.0",
