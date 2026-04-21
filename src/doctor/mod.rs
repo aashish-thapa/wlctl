@@ -67,7 +67,10 @@ pub async fn run() -> Result<()> {
 
     let device_path = nm.get_wifi_device().await.context("No WiFi device found")?;
     let device_path_str = device_path.as_str().to_string();
-    let interface = nm.get_device_interface(&device_path_str).await?;
+    let interface = nm
+        .get_device_interface(&device_path_str)
+        .await
+        .context("Could not read interface name for WiFi device")?;
 
     let ctx = DoctorContext {
         nm,
