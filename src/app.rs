@@ -44,6 +44,10 @@ pub struct App {
     pub network_name_requiring_auth: Option<String>,
     pub network_pending_auth: Option<Network>,
     pub doctor: Option<DoctorModal>,
+    /// Monotonic run id. Each `start_doctor` bumps this; the event handler only
+    /// applies results that carry the current id. Dismissing also bumps it, so
+    /// in-flight results never resurrect a closed modal.
+    pub doctor_run_id: u64,
 }
 
 impl App {
@@ -108,6 +112,7 @@ Error: {}",
             network_name_requiring_auth: None,
             network_pending_auth: None,
             doctor: None,
+            doctor_run_id: 0,
         })
     }
 

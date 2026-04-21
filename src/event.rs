@@ -26,7 +26,10 @@ pub enum Event {
     AuthReqUsernameAndPassword(String),
     UsernameAndPasswordSubmit,
     SpeedTestResult(SpeedTest),
-    DoctorCompleted(Vec<CheckEntry>),
+    DoctorCompleted {
+        run_id: u64,
+        results: Vec<CheckEntry>,
+    },
 }
 
 #[allow(dead_code)]
