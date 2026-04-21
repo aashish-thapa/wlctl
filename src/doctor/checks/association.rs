@@ -30,7 +30,7 @@ impl DiagnosticCheck for AssociationCheck {
                 };
                 Outcome::ok(format!("{} ({}% signal)", ssid, info.strength))
             }
-            Err(_) => Outcome::ok("associated (AP details unreadable)"),
+            Err(e) => Outcome::warn(format!("associated but AP details unreadable: {}", e)),
         }
     }
 }
