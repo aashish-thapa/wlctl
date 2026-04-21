@@ -31,8 +31,8 @@ zbus = { version = "5", default-features = false, features = ["tokio"] }
 chrono = "0.4"
 log = "0.4"
 env_logger = "0.11"
-strum = { version = "0.27.2", features = ["derive"] }
-strum_macros = "0.27"
+strum = { version = "0.28.0", features = ["derive"] }
+strum_macros = "0.28"
 libc = "0.2"
 hex = "0.4.3"
 tui-qrcode = "0.1.3"
