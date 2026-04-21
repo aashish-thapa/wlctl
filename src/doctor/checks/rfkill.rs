@@ -19,6 +19,8 @@ impl DiagnosticCheck for RfkillCheck {
             Err(_) => return Outcome::skip("rfkill sysfs not available"),
         };
 
+        let mut saw_wlan = false;
+
         while let Ok(Some(entry)) = entries.next_entry().await {
             let path = entry.path();
 
@@ -28,23 +30,24 @@ impl DiagnosticCheck for RfkillCheck {
             if kind.trim() != "wlan" {
                 continue;
             }
+            saw_wlan = true;
 
-            let soft = read_flag(&path, "soft").await;
-            let hard = read_flag(&path, "hard").await;
-
-            if hard {
+            if read_flag(&path, "hard").await {
                 return Outcome::fail(
                     "wireless hard-blocked",
                     "Toggle the hardware WiFi switch (laptop kill switch or keyboard function key).",
                 );
             }
-            if soft {
+            if read_flag(&path, "soft").await {
                 return Outcome::fail("wireless soft-blocked", "Run: rfkill unblock wlan");
             }
-            return Outcome::ok("not blocked");
         }
 
-        Outcome::skip("no wlan rfkill entry found")
+        if saw_wlan {
+            Outcome::ok("not blocked")
+        } else {
+            Outcome::skip("no wlan rfkill entry found")
+        }
     }
 }
 
