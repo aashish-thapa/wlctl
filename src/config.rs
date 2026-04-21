@@ -41,7 +41,10 @@ fn default_esc_quit() -> bool {
 pub struct Device {
     #[serde(default = "default_show_device_infos")]
     pub infos: char,
+    #[serde(default = "default_toggle_power")]
     pub toggle_power: char,
+    #[serde(default = "default_doctor")]
+    pub doctor: char,
 }
 
 impl Default for Device {
@@ -49,12 +52,21 @@ impl Default for Device {
         Self {
             infos: 'i',
             toggle_power: 'o',
+            doctor: '?',
         }
     }
 }
 
 fn default_show_device_infos() -> char {
     'i'
+}
+
+fn default_toggle_power() -> char {
+    'o'
+}
+
+fn default_doctor() -> char {
+    '?'
 }
 
 // Station
