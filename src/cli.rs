@@ -11,4 +11,8 @@ pub fn cli() -> Command {
                 .help("Device mode")
                 .value_parser(["station", "ap"]),
         )
+        .subcommand(
+            Command::new("doctor")
+                .about("Diagnose why your WiFi isn't working (rfkill, driver, DHCP, DNS, ...)"),
+        )
 }
