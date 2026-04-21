@@ -2,6 +2,67 @@
 
 use std::fmt;
 
+/// Active IPv4 configuration pulled from an NM device's `Ip4Config` object.
+#[derive(Debug, Clone, Default)]
+pub struct Ip4Info {
+    pub addresses: Vec<(String, u32)>,
+    pub gateway: Option<String>,
+    pub nameservers: Vec<String>,
+}
+
+/// NetworkManager connectivity state. Mirrors `NM_CONNECTIVITY_*` values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Connectivity {
+    Unknown,
+    None,
+    Portal,
+    Limited,
+    Full,
+}
+
+impl From<u32> for Connectivity {
+    fn from(value: u32) -> Self {
+        match value {
+            1 => Connectivity::None,
+            2 => Connectivity::Portal,
+            3 => Connectivity::Limited,
+            4 => Connectivity::Full,
+            _ => Connectivity::Unknown,
+        }
+    }
+}
+
+#[cfg(test)]
+mod connectivity_tests {
+    use super::Connectivity;
+
+    #[test]
+    fn known_nm_codes_map_correctly() {
+        assert_eq!(Connectivity::from(1), Connectivity::None);
+        assert_eq!(Connectivity::from(2), Connectivity::Portal);
+        assert_eq!(Connectivity::from(3), Connectivity::Limited);
+        assert_eq!(Connectivity::from(4), Connectivity::Full);
+    }
+
+    #[test]
+    fn unknown_codes_fall_back() {
+        assert_eq!(Connectivity::from(0), Connectivity::Unknown);
+        assert_eq!(Connectivity::from(99), Connectivity::Unknown);
+    }
+}
+
+impl fmt::Display for Connectivity {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Connectivity::Unknown => write!(f, "unknown"),
+            Connectivity::None => write!(f, "no connectivity"),
+            Connectivity::Portal => write!(f, "captive portal"),
+            Connectivity::Limited => write!(f, "limited"),
+            Connectivity::Full => write!(f, "full internet"),
+        }
+    }
+}
+
 /// WiFi operation mode (replaces iwdrs::modes::Mode)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Mode {
