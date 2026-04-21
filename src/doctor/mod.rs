@@ -5,7 +5,10 @@
 mod check;
 mod checks;
 mod context;
+mod render;
 mod report;
+
+pub use render::render_modal;
 
 use std::sync::Arc;
 
@@ -13,13 +16,24 @@ use anyhow::{Context as _, Result};
 
 use crate::nm::NMClient;
 
-use check::{DiagnosticCheck, Outcome};
+pub use check::{Outcome, Status};
+
+use check::DiagnosticCheck;
 use checks::{
     AssociationCheck, DeviceStateCheck, DnsCheck, DriverCheck, GatewayCheck, InternetCheck,
     IpAddressCheck, PortalCheck, RfkillCheck,
 };
 use context::DoctorContext;
 use report::Report;
+
+/// One row in a completed diagnostic report.
+pub type CheckEntry = (&'static str, Outcome);
+
+/// TUI-visible state of the doctor modal.
+pub enum DoctorModal {
+    Running,
+    Ready(Vec<CheckEntry>),
+}
 
 /// Composes the default set of diagnostic checks in stack order.
 pub struct Doctor {
@@ -46,7 +60,7 @@ impl Default for Doctor {
 
 impl Doctor {
     /// Runs every check sequentially and returns an ordered list of results.
-    pub async fn run(&self, ctx: &DoctorContext) -> Vec<(&'static str, Outcome)> {
+    async fn run(&self, ctx: &DoctorContext) -> Vec<CheckEntry> {
         let mut results = Vec::with_capacity(self.checks.len());
         for check in &self.checks {
             let outcome = check.run(ctx).await;
@@ -54,6 +68,21 @@ impl Doctor {
         }
         results
     }
+}
+
+/// Runs the default check suite against the given NM device and returns
+/// results. Used by the TUI modal; the CLI uses `run()` below.
+pub async fn check_now(
+    nm: Arc<NMClient>,
+    device_path: String,
+    interface: String,
+) -> Vec<CheckEntry> {
+    let ctx = DoctorContext {
+        nm,
+        device_path,
+        interface,
+    };
+    Doctor::default().run(&ctx).await
 }
 
 /// Entry point invoked by the CLI. Builds a context for the first WiFi device
