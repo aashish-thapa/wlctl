@@ -165,15 +165,11 @@ impl NMClient {
         )
         .await?;
 
-        let address_data: Vec<HashMap<String, OwnedValue>> = ip4_proxy
-            .get_property("AddressData")
-            .await
-            .unwrap_or_default();
-        let gateway: String = ip4_proxy.get_property("Gateway").await.unwrap_or_default();
-        let nameservers: Vec<HashMap<String, OwnedValue>> = ip4_proxy
-            .get_property("NameserverData")
-            .await
-            .unwrap_or_default();
+        let address_data: Vec<HashMap<String, OwnedValue>> =
+            ip4_proxy.get_property("AddressData").await?;
+        let gateway: String = ip4_proxy.get_property("Gateway").await?;
+        let nameservers: Vec<HashMap<String, OwnedValue>> =
+            ip4_proxy.get_property("NameserverData").await?;
 
         let addresses = address_data
             .into_iter()
