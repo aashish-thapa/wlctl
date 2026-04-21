@@ -5,9 +5,9 @@ use tokio::sync::mpsc::UnboundedSender;
 use crate::nm::{Mode, NMClient};
 
 use crate::{
-    adapter::Adapter, agent::AuthAgent, config::Config, device::Device, event::Event,
-    mode::station::auth::Auth, mode::station::network::Network, notification::Notification,
-    reset::Reset,
+    adapter::Adapter, agent::AuthAgent, config::Config, device::Device, doctor::DoctorModal,
+    event::Event, mode::station::auth::Auth, mode::station::network::Network,
+    notification::Notification, reset::Reset,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -27,6 +27,7 @@ pub enum FocusedBlock {
     ShareNetwork,
     SpeedTest,
     HiddenSsidInput,
+    Doctor,
 }
 
 pub struct App {
@@ -42,6 +43,7 @@ pub struct App {
     pub auth: Auth,
     pub network_name_requiring_auth: Option<String>,
     pub network_pending_auth: Option<Network>,
+    pub doctor: Option<DoctorModal>,
 }
 
 impl App {
@@ -105,6 +107,7 @@ Error: {}",
             auth: Auth::default(),
             network_name_requiring_auth: None,
             network_pending_auth: None,
+            doctor: None,
         })
     }
 
