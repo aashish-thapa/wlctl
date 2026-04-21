@@ -178,8 +178,14 @@ You do not have the required permissions. Ensure you are part of the appropriate
                 }
             }
 
-            Event::DoctorCompleted(results) => {
-                app.doctor = Some(wlctl::doctor::DoctorModal::Ready(results));
+            Event::DoctorCompleted { run_id, results } => {
+                // Only accept results for the current run that is still running.
+                // Stale results (from a dismissed or superseded run) are dropped.
+                if run_id == app.doctor_run_id
+                    && matches!(app.doctor, Some(wlctl::doctor::DoctorModal::Running))
+                {
+                    app.doctor = Some(wlctl::doctor::DoctorModal::Ready(results));
+                }
             }
 
             _ => {}

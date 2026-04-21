@@ -99,6 +99,9 @@ pub async fn toggle_connect(app: &mut App, sender: UnboundedSender<Event>) -> Re
 async fn start_doctor(app: &mut App, sender: UnboundedSender<Event>) {
     use crate::doctor::{self, DoctorModal};
 
+    app.doctor_run_id = app.doctor_run_id.wrapping_add(1);
+    let run_id = app.doctor_run_id;
+
     app.doctor = Some(DoctorModal::Running);
     app.focused_block = FocusedBlock::Doctor;
 
@@ -108,7 +111,7 @@ async fn start_doctor(app: &mut App, sender: UnboundedSender<Event>) {
 
     tokio::spawn(async move {
         let results = doctor::check_now(nm, device_path, interface).await;
-        let _ = sender.send(Event::DoctorCompleted(results));
+        let _ = sender.send(Event::DoctorCompleted { run_id, results });
     });
 }
 
@@ -186,9 +189,11 @@ pub async fn handle_key_events(
         return Ok(());
     }
 
-    // Doctor modal captures all keys while open. Esc dismisses it.
+    // Doctor modal captures all keys while open. Esc dismisses it and bumps
+    // the run id so an in-flight check's result can't resurrect the modal.
     if app.focused_block == FocusedBlock::Doctor {
         if key_event.code == KeyCode::Esc {
+            app.doctor_run_id = app.doctor_run_id.wrapping_add(1);
             app.doctor = None;
             app.focused_block = FocusedBlock::Device;
         }
