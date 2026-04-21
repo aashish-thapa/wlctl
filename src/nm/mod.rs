@@ -395,7 +395,7 @@ impl NMClient {
         }
 
         // Sort by timestamp (most recent first)
-        wifi_connections.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        wifi_connections.sort_by_key(|c| std::cmp::Reverse(c.timestamp));
 
         Ok(wifi_connections)
     }
