@@ -8,6 +8,7 @@ use wlctl::{
     app::App,
     cli,
     config::Config,
+    doctor,
     event::{Event, EventHandler},
     handler::{handle_key_events, toggle_connect},
     nm::Mode,
@@ -24,6 +25,10 @@ async fn main() -> Result<()> {
         .init();
 
     let args = cli::cli().get_matches();
+
+    if let Some(("doctor", _)) = args.subcommand() {
+        return doctor::run().await;
+    }
 
     rfkill::check()?;
 
