@@ -50,9 +50,9 @@ pub struct Device {
 impl Default for Device {
     fn default() -> Self {
         Self {
-            infos: 'i',
-            toggle_power: 'o',
-            doctor: '?',
+            infos: default_show_device_infos(),
+            toggle_power: default_toggle_power(),
+            doctor: default_doctor(),
         }
     }
 }
