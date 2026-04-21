@@ -141,6 +141,88 @@ impl NMClient {
         Ok(())
     }
 
+    /// Get the IPv4 configuration in use on the given device (address, gateway,
+    /// nameservers). Returns `None` when the device has no active IPv4 config.
+    pub async fn get_ip4_info(&self, device_path: &str) -> Result<Option<Ip4Info>> {
+        let device_proxy = Proxy::new(
+            &self.connection,
+            NM_BUS_NAME,
+            device_path,
+            "org.freedesktop.NetworkManager.Device",
+        )
+        .await?;
+
+        let ip4_path: OwnedObjectPath = device_proxy.get_property("Ip4Config").await?;
+        if ip4_path.as_str() == "/" {
+            return Ok(None);
+        }
+
+        let ip4_proxy = Proxy::new(
+            &self.connection,
+            NM_BUS_NAME,
+            ip4_path.as_str(),
+            "org.freedesktop.NetworkManager.IP4Config",
+        )
+        .await?;
+
+        let address_data: Vec<HashMap<String, OwnedValue>> = ip4_proxy
+            .get_property("AddressData")
+            .await
+            .unwrap_or_default();
+        let gateway: String = ip4_proxy.get_property("Gateway").await.unwrap_or_default();
+        let nameservers: Vec<HashMap<String, OwnedValue>> = ip4_proxy
+            .get_property("NameserverData")
+            .await
+            .unwrap_or_default();
+
+        let addresses = address_data
+            .into_iter()
+            .filter_map(|m| {
+                let addr: String = m.get("address")?.try_clone().ok()?.try_into().ok()?;
+                let prefix: u32 = m
+                    .get("prefix")
+                    .and_then(|v| v.try_clone().ok())
+                    .and_then(|v| v.try_into().ok())
+                    .unwrap_or(0);
+                Some((addr, prefix))
+            })
+            .collect();
+
+        let nameservers = nameservers
+            .into_iter()
+            .filter_map(|m| {
+                m.get("address")
+                    .and_then(|v| v.try_clone().ok())
+                    .and_then(|v| v.try_into().ok())
+            })
+            .collect();
+
+        Ok(Some(Ip4Info {
+            addresses,
+            gateway: if gateway.is_empty() {
+                None
+            } else {
+                Some(gateway)
+            },
+            nameservers,
+        }))
+    }
+
+    /// NetworkManager's global connectivity check. Triggers a fresh probe and
+    /// returns the result: full internet, captive portal, limited, or none.
+    pub async fn check_connectivity(&self) -> Result<Connectivity> {
+        let proxy = Proxy::new(
+            &self.connection,
+            NM_BUS_NAME,
+            NM_PATH,
+            "org.freedesktop.NetworkManager",
+        )
+        .await?;
+
+        let state: u32 = proxy.call("CheckConnectivity", &()).await?;
+        Ok(Connectivity::from(state))
+    }
+
     /// Get device state
     pub async fn get_device_state(&self, device_path: &str) -> Result<DeviceState> {
         let proxy = Proxy::new(
