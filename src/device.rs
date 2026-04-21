@@ -208,6 +208,9 @@ impl Device {
                 Span::from(" | "),
                 Span::from(config.device.toggle_power.to_string()).bold(),
                 Span::from(" Toggle Power"),
+                Span::from(" | "),
+                Span::from(config.device.doctor.to_string()).bold(),
+                Span::from(" Doctor"),
             ]),
             FocusedBlock::AdapterInfos => {
                 Line::from(vec![Span::from("󱊷 ").bold(), Span::from(" Discard")])

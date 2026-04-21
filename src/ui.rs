@@ -38,6 +38,12 @@ pub fn render(app: &mut App, frame: &mut Frame) {
             app.adapter.render(frame, app.device.address.clone());
         }
 
+        if app.focused_block == FocusedBlock::Doctor
+            && let Some(modal) = &app.doctor
+        {
+            crate::doctor::render_modal(frame, modal);
+        }
+
         if app.focused_block == FocusedBlock::HiddenSsidInput {
             app.auth.hidden.render(frame);
         }
