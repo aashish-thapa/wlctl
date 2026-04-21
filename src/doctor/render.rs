@@ -22,11 +22,16 @@ pub fn render_modal(frame: &mut Frame, modal: &DoctorModal) {
 }
 
 fn popup_area(full: Rect) -> Rect {
+    // Size the modal relative to the terminal, clamped so it never fully fills
+    // the screen and never shrinks below a readable floor.
+    let modal_h = full.height.saturating_sub(4).clamp(10, 20);
+    let modal_w = full.width.saturating_sub(4).clamp(40, 72);
+
     let vertical = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Fill(1),
-            Constraint::Length(20),
+            Constraint::Length(modal_h),
             Constraint::Fill(1),
         ])
         .flex(Flex::Start)
@@ -36,7 +41,7 @@ fn popup_area(full: Rect) -> Rect {
         .direction(Direction::Horizontal)
         .constraints([
             Constraint::Fill(1),
-            Constraint::Min(72),
+            Constraint::Length(modal_w),
             Constraint::Fill(1),
         ])
         .split(vertical[1])[1]
@@ -106,7 +111,11 @@ fn verdict_rows(entries: &[CheckEntry]) -> Vec<Row<'_>> {
         return rows;
     }
 
-    rows.push(Row::new(vec![Cell::from("")]));
+    rows.push(Row::new(vec![
+        Cell::from(""),
+        Cell::from(""),
+        Cell::from(""),
+    ]));
     for (_, outcome) in entries {
         if let Some(verdict) = &outcome.verdict {
             rows.push(Row::new(vec![
