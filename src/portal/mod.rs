@@ -40,34 +40,55 @@ impl PortalWatcher {
 
     /// Poll connectivity and report a new portal if we just entered the Portal
     /// state on an SSID we haven't auto-opened for yet.
+    ///
+    /// State (`previous_state`, `opened_for`) is committed only after all
+    /// required lookups succeed. A transient D-Bus error leaves the watcher
+    /// eligible to retry on the next tick — otherwise a single failed SSID
+    /// lookup would mark the portal transition as already handled and the
+    /// auto-open would never fire for that session.
     pub async fn poll(
         &mut self,
         nm: &Arc<NMClient>,
         device_path: &str,
     ) -> Result<Option<PortalDetected>> {
         let state = nm.check_connectivity().await?;
-        let previous = self.previous_state.replace(state);
 
+        // Leaving Portal (or never entered): safe to record — re-entry will
+        // flow back through the transition branch below.
         if state != Connectivity::Portal {
-            return Ok(None);
-        }
-        if previous == Some(Connectivity::Portal) {
+            self.previous_state = Some(state);
             return Ok(None);
         }
 
+        // Already in Portal on the previous tick — no transition to report.
+        if self.previous_state == Some(Connectivity::Portal) {
+            return Ok(None);
+        }
+
+        // Fresh Portal transition. Gather details before committing any
+        // state; transient lookup failures fall through without mutation so
+        // the next tick re-evaluates the same transition.
         let ssid = match nm.get_connected_ssid(device_path).await {
             Ok(Some(s)) => s,
             _ => return Ok(None),
         };
 
-        if !self.opened_for.insert(ssid.clone()) {
+        if self.opened_for.contains(&ssid) {
+            // Already handled this SSID this session; record the Portal state
+            // so subsequent ticks short-circuit on the "previous == Portal"
+            // guard above instead of re-entering this branch.
+            self.previous_state = Some(Connectivity::Portal);
             return Ok(None);
         }
 
-        let url = nm.get_connectivity_check_uri().await.unwrap_or_default();
+        let url = nm.get_connectivity_check_uri().await?;
         if url.is_empty() {
             return Ok(None);
         }
+
+        // All lookups succeeded — commit the transition.
+        self.previous_state = Some(Connectivity::Portal);
+        self.opened_for.insert(ssid.clone());
 
         Ok(Some(PortalDetected { ssid, url }))
     }
