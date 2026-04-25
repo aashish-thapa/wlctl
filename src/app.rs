@@ -7,9 +7,17 @@ use zbus::zvariant::OwnedObjectPath;
 use crate::nm::{Mode, NMClient};
 
 use crate::{
-    adapter::Adapter, agent::AuthAgent, config::Config, device::Device, doctor::DoctorModal,
-    event::Event, mode::station::auth::Auth, mode::station::network::Network,
-    notification::Notification, reset::Reset,
+    adapter::Adapter,
+    agent::AuthAgent,
+    config::Config,
+    device::Device,
+    doctor::DoctorModal,
+    event::Event,
+    mode::station::auth::Auth,
+    mode::station::network::Network,
+    notification::{Notification, NotificationLevel},
+    portal::{self, PortalWatcher},
+    reset::Reset,
 };
 
 /// Marker glyph rendered in the Active column for the currently active adapter.
@@ -157,6 +165,9 @@ pub struct App {
     /// applies results that carry the current id. Dismissing also bumps it, so
     /// in-flight results never resurrect a closed modal.
     pub doctor_run_id: u64,
+    /// Captive portal transition tracker. Idle field that only acts during
+    /// `tick()` when the current SSID transitions into a portal state.
+    pub portal_watcher: PortalWatcher,
 }
 
 impl App {
@@ -220,6 +231,7 @@ Error: {}",
             network_pending_auth: None,
             doctor: None,
             doctor_run_id: 0,
+            portal_watcher: PortalWatcher::new(),
         })
     }
 
@@ -360,7 +372,42 @@ Error: {}",
         self.device.refresh().await?;
         self.adapter.refresh().await?;
 
+        self.check_captive_portal().await;
+
         Ok(())
+    }
+
+    async fn check_captive_portal(&mut self) {
+        if !self.config.captive_portal.auto_open {
+            return;
+        }
+
+        let detected = match self
+            .portal_watcher
+            .poll(&self.client, &self.device.device_path)
+            .await
+        {
+            Ok(Some(d)) => d,
+            Ok(None) => return,
+            Err(_) => return,
+        };
+
+        self.notifications.push(Notification {
+            message: format!(
+                "Captive portal detected on '{}'. Opening browser...",
+                detected.ssid
+            ),
+            level: NotificationLevel::Info,
+            ttl: 5,
+        });
+
+        if let Err(e) = portal::launch_browser(&detected.url).await {
+            self.notifications.push(Notification {
+                message: format!("Could not launch browser: {}", e),
+                level: NotificationLevel::Error,
+                ttl: 5,
+            });
+        }
     }
 
     pub fn quit(&mut self) {

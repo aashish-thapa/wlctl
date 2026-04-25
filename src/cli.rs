@@ -18,4 +18,7 @@ pub fn cli() -> Command {
             Command::new("doctor")
                 .about("Diagnose why your WiFi isn't working (rfkill, driver, DHCP, DNS, ...)"),
         )
+        .subcommand(
+            Command::new("portal").about("Detect a captive portal and open it in your browser"),
+        )
 }
