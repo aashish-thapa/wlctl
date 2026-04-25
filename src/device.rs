@@ -1,6 +1,6 @@
-use anyhow::Context;
 use anyhow::Result;
 use std::sync::Arc;
+use zbus::zvariant::OwnedObjectPath;
 
 use crate::nm::{Mode, NMClient};
 
@@ -13,7 +13,7 @@ use ratatui::{
 };
 
 use crate::{
-    app::FocusedBlock,
+    app::{AdapterView, FocusedBlock},
     config::Config,
     mode::{ap::AccessPoint, station::Station},
 };
@@ -31,11 +31,7 @@ pub struct Device {
 }
 
 impl Device {
-    pub async fn new(client: Arc<NMClient>) -> Result<Self> {
-        let device_path = client
-            .get_wifi_device()
-            .await
-            .context("No WiFi device found")?;
+    pub async fn new(client: Arc<NMClient>, device_path: OwnedObjectPath) -> Result<Self> {
         let device_path_str = device_path.as_str().to_string();
 
         let name = client.get_device_interface(&device_path_str).await?;
@@ -149,13 +145,19 @@ impl Device {
         Ok(())
     }
 
-    pub fn render(&mut self, frame: &mut Frame, focused_block: FocusedBlock, config: Arc<Config>) {
+    pub fn render(
+        &mut self,
+        frame: &mut Frame,
+        focused_block: FocusedBlock,
+        config: Arc<Config>,
+        view: &AdapterView,
+    ) {
         let (device_block, help_block) = {
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([
                     Constraint::Fill(1),
-                    Constraint::Length(5),
+                    Constraint::Length(AdapterView::BLOCK_HEIGHT),
                     Constraint::Length(1),
                 ])
                 .margin(1)
@@ -163,24 +165,23 @@ impl Device {
             (chunks[1], chunks[2])
         };
 
-        //
-        // Device
-        //
-        let row = Row::new(vec![Line::from(self.name.clone()).centered(), {
-            if self.is_powered {
-                Line::from("On").centered()
-            } else {
-                Line::from("Off").centered()
-            }
-        }]);
+        let is_powered = self.is_powered;
+        let rows = view.build_rows(
+            |adapter, marker| active_device_row(&adapter.name, is_powered, marker),
+            |adapter| inactive_device_row(&adapter.name),
+        );
+        let widths = [
+            Constraint::Length(16),
+            Constraint::Length(8),
+            Constraint::Length(6),
+        ];
 
-        let widths = [Constraint::Length(10), Constraint::Length(8)];
-
-        let device_table = Table::new(vec![row], widths)
+        let device_table = Table::new(rows, widths)
             .header({
                 Row::new(vec![
                     Line::from("Name").yellow().centered(),
                     Line::from("Powered").yellow().centered(),
+                    Line::from("Active").yellow().centered(),
                 ])
                 .style(Style::new().bold())
                 .bottom_margin(1)
@@ -198,28 +199,65 @@ impl Device {
             .flex(Flex::SpaceAround)
             .row_highlight_style(Style::default().bg(Color::DarkGray).fg(Color::White));
 
-        let mut device_state = TableState::default().with_selected(0);
+        let mut device_state =
+            TableState::default().with_selected(view.table_selection(focused_block));
         frame.render_stateful_widget(device_table, device_block, &mut device_state);
 
-        let help_message = match focused_block {
-            FocusedBlock::Device => Line::from(vec![
-                Span::from(config.device.infos.to_string()).bold(),
-                Span::from(" Infos"),
-                Span::from(" | "),
-                Span::from(config.device.toggle_power.to_string()).bold(),
-                Span::from(" Toggle Power"),
-                Span::from(" | "),
-                Span::from(config.device.doctor.to_string()).bold(),
-                Span::from(" Doctor"),
-            ]),
+        let help_message = Self::help_line(focused_block, &config, view.is_multi());
+        frame.render_widget(help_message.centered().blue(), help_block);
+    }
+
+    fn help_line<'a>(focused_block: FocusedBlock, config: &Config, multi: bool) -> Line<'a> {
+        match focused_block {
+            FocusedBlock::Device => {
+                let mut spans = vec![
+                    Span::from(config.device.infos.to_string()).bold(),
+                    Span::from(" Infos"),
+                    Span::from(" | "),
+                    Span::from(config.device.toggle_power.to_string()).bold(),
+                    Span::from(" Toggle Power"),
+                    Span::from(" | "),
+                    Span::from(config.device.doctor.to_string()).bold(),
+                    Span::from(" Doctor"),
+                ];
+                if multi {
+                    spans.extend(adapter_nav_spans());
+                }
+                Line::from(spans)
+            }
             FocusedBlock::AdapterInfos => {
                 Line::from(vec![Span::from("󱊷 ").bold(), Span::from(" Discard")])
             }
             _ => Line::from(""),
-        };
-
-        let help_message = help_message.centered().blue();
-
-        frame.render_widget(help_message, help_block);
+        }
     }
+}
+
+/// Help-line fragment shown when adapter navigation is active. Shared by the
+/// Device / Station / AP help rows so the keybinding hint stays in sync.
+pub fn adapter_nav_spans<'a>() -> Vec<Span<'a>> {
+    vec![
+        Span::from(" | "),
+        Span::from("j/k").bold(),
+        Span::from(" Move"),
+        Span::from(" | "),
+        Span::from("⏎").bold(),
+        Span::from(" Activate"),
+    ]
+}
+
+fn active_device_row<'a>(name: &str, is_powered: bool, marker: &str) -> Row<'a> {
+    Row::new(vec![
+        Line::from(name.to_string()).centered(),
+        Line::from(if is_powered { "On" } else { "Off" }).centered(),
+        Line::from(marker.to_string()).centered(),
+    ])
+}
+
+fn inactive_device_row<'a>(name: &str) -> Row<'a> {
+    Row::new(vec![
+        Line::from(name.to_string()).centered(),
+        Line::from("-").centered(),
+        Line::from("").centered(),
+    ])
 }

@@ -154,6 +154,31 @@ async fn toggle_device_power(sender: UnboundedSender<Event>, device: &Device) ->
     Ok(())
 }
 
+/// Handles adapter list navigation (j/k/arrows) and activation (Enter/Space)
+/// when the Device block is focused. Returns `true` when the event was
+/// consumed so the caller short-circuits further processing.
+async fn handle_adapter_navigation(app: &mut App, key_event: KeyEvent) -> Result<bool> {
+    if app.focused_block != FocusedBlock::Device || app.adapter_count() <= 1 {
+        return Ok(false);
+    }
+
+    match key_event.code {
+        KeyCode::Char('j') | KeyCode::Down => {
+            app.move_adapter_selection(1);
+            Ok(true)
+        }
+        KeyCode::Char('k') | KeyCode::Up => {
+            app.move_adapter_selection(-1);
+            Ok(true)
+        }
+        KeyCode::Enter | KeyCode::Char(' ') => {
+            app.activate_selected_adapter().await?;
+            Ok(true)
+        }
+        _ => Ok(false),
+    }
+}
+
 pub async fn handle_key_events(
     key_event: KeyEvent,
     app: &mut App,
@@ -206,6 +231,14 @@ pub async fn handle_key_events(
         && c == config.device.doctor
     {
         start_doctor(app, sender).await;
+        return Ok(());
+    }
+
+    // Adapter navigation is active whenever the Device block has focus and
+    // more than one adapter exists — intercept before the mode/power branches
+    // so j/k/Enter don't reach the network list handlers. The doctor trigger
+    // above takes precedence because its key set ('?') doesn't overlap here.
+    if handle_adapter_navigation(app, key_event).await? {
         return Ok(());
     }
 
