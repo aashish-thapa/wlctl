@@ -66,11 +66,12 @@ impl PortalWatcher {
         }
 
         // Fresh Portal transition. Gather details before committing any
-        // state; transient lookup failures fall through without mutation so
-        // the next tick re-evaluates the same transition.
-        let ssid = match nm.get_connected_ssid(device_path).await {
-            Ok(Some(s)) => s,
-            _ => return Ok(None),
+        // state; transient lookup failures propagate via `?` (caller decides
+        // how to react) so the next tick re-evaluates the same transition.
+        // `Ok(None)` — no SSID currently associated — is a legitimate no-op,
+        // distinct from a D-Bus failure, so we return cleanly without error.
+        let Some(ssid) = nm.get_connected_ssid(device_path).await? else {
+            return Ok(None);
         };
 
         if self.opened_for.contains(&ssid) {
