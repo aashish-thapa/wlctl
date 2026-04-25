@@ -3,26 +3,38 @@ use std::sync::atomic::Ordering;
 use crate::nm::Mode;
 use ratatui::Frame;
 
-use crate::app::{App, FocusedBlock};
+use crate::app::{AdapterView, App, FocusedBlock};
 
 pub fn render(app: &mut App, frame: &mut Frame) {
     if app.reset.enable {
         app.reset.render(frame);
     } else {
+        let view = AdapterView {
+            adapters: &app.adapters,
+            active_index: app.active_index,
+            selection_index: app.adapter_selection_index,
+        };
+
         if !app.device.is_powered {
             app.device
-                .render(frame, app.focused_block, app.config.clone())
+                .render(frame, app.focused_block, app.config.clone(), &view)
         } else {
             let device = app.device.clone();
             match app.device.mode {
                 Mode::Station => {
                     if let Some(station) = &mut app.device.station {
-                        station.render(frame, app.focused_block, &device, app.config.clone());
+                        station.render(
+                            frame,
+                            app.focused_block,
+                            &device,
+                            app.config.clone(),
+                            &view,
+                        );
                     }
                 }
                 Mode::Ap => {
                     if let Some(ap) = &mut app.device.ap {
-                        ap.render(frame, app.focused_block, &device, app.config.clone());
+                        ap.render(frame, app.focused_block, &device, app.config.clone(), &view);
                     }
                 }
             }

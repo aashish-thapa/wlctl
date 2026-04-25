@@ -15,13 +15,37 @@ use ratatui::{
 };
 
 use crate::{
-    app::FocusedBlock,
+    app::{AdapterView, FocusedBlock},
     config::Config,
-    device::Device,
+    device::{Device, adapter_nav_spans},
     event::Event,
     notification::{Notification, NotificationLevel},
 };
 use tui_input::Input;
+
+/// Row for the adapter currently hosting the AP. Carries Powered / Address
+/// from the live Device plus an optional active marker.
+fn active_ap_row<'a>(name: &str, device: &Device, marker: &str) -> Row<'a> {
+    Row::new(vec![
+        Line::from(name.to_string()).centered(),
+        Line::from("Access Point").centered(),
+        Line::from(if device.is_powered { "On" } else { "Off" }).centered(),
+        Line::from(device.address.clone()).centered(),
+        Line::from(marker.to_string()).centered(),
+    ])
+}
+
+/// Row for an adapter that is *not* the active AP. Address/Powered are
+/// unknown for adapters we haven't instantiated, so they dash out.
+fn inactive_ap_row<'a>(name: &str) -> Row<'a> {
+    Row::new(vec![
+        Line::from(name.to_string()).centered(),
+        Line::from("Access Point").centered(),
+        Line::from("-").centered(),
+        Line::from("-").centered(),
+        Line::from("").centered(),
+    ])
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum APFocusedSection {
@@ -356,69 +380,66 @@ impl AccessPoint {
         focused_block: FocusedBlock,
         device: &Device,
         config: Arc<Config>,
+        view: &AdapterView,
     ) {
         let (access_point_block, connected_devices_block, device_block, help_block) = {
+            let constraints: [Constraint; 4] = if !self.connected_devices.is_empty() {
+                [
+                    Constraint::Length(5),
+                    Constraint::Fill(1),
+                    Constraint::Length(AdapterView::BLOCK_HEIGHT),
+                    Constraint::Length(1),
+                ]
+            } else {
+                [
+                    Constraint::Fill(1),
+                    Constraint::Length(0),
+                    Constraint::Length(AdapterView::BLOCK_HEIGHT),
+                    Constraint::Length(1),
+                ]
+            };
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
-                .constraints(if !self.connected_devices.is_empty() {
-                    &[
-                        Constraint::Length(5),
-                        Constraint::Fill(1),
-                        Constraint::Length(5),
-                        Constraint::Length(1),
-                    ]
-                } else {
-                    &[
-                        Constraint::Fill(1),
-                        Constraint::Length(0),
-                        Constraint::Length(5),
-                        Constraint::Length(1),
-                    ]
-                })
+                .constraints(constraints)
                 .margin(1)
                 .split(frame.area());
             (chunks[0], chunks[1], chunks[2], chunks[3])
         };
 
-        // Device
-        let row = Row::new(vec![
-            Line::from(device.name.clone()).centered(),
-            Line::from("Access Point").centered(),
-            {
-                if device.is_powered {
-                    Line::from("On").centered()
-                } else {
-                    Line::from("Off").centered()
-                }
-            },
-            Line::from(device.address.clone()).centered(),
-        ]);
+        // Device — one row per adapter. Inactive rows dash out mode-specific
+        // columns; active row carries the real Powered/Address values.
+        let rows = view.build_rows(
+            |adapter, marker| active_ap_row(&adapter.name, device, marker),
+            |adapter| inactive_ap_row(&adapter.name),
+        );
 
         let widths = [
             Constraint::Length(15),
             Constraint::Length(12),
             Constraint::Length(7),
             Constraint::Length(17),
+            Constraint::Length(6),
         ];
 
-        let device_table = Table::new(vec![row], widths)
+        let device_table = Table::new(rows, widths)
             .header({
+                let labels = ["Name", "Mode", "Powered", "Address", "Active"];
                 if focused_block == FocusedBlock::Device {
-                    Row::new(vec![
-                        Line::from("Name").yellow().centered(),
-                        Line::from("Mode").yellow().centered(),
-                        Line::from("Powered").yellow().centered(),
-                        Line::from("Address").yellow().centered(),
-                    ])
+                    Row::new(
+                        labels
+                            .iter()
+                            .map(|l| Line::from(*l).yellow().centered())
+                            .collect::<Vec<_>>(),
+                    )
                     .style(Style::new().bold())
                     .bottom_margin(1)
                 } else {
-                    Row::new(vec![
-                        Line::from("Name").centered(),
-                        Line::from("Mode").centered(),
-                        Line::from("Powered").centered(),
-                        Line::from("Address").centered(),
-                    ])
+                    Row::new(
+                        labels
+                            .iter()
+                            .map(|l| Line::from(*l).centered())
+                            .collect::<Vec<_>>(),
+                    )
                     .bottom_margin(1)
                 }
             })
@@ -457,7 +478,8 @@ impl AccessPoint {
                 Style::default()
             });
 
-        let mut device_state = TableState::default().with_selected(0);
+        let mut device_state =
+            TableState::default().with_selected(view.table_selection(focused_block));
         frame.render_stateful_widget(device_table, device_block, &mut device_state);
 
         // Access Point
@@ -610,22 +632,28 @@ impl AccessPoint {
         }
 
         let help_message = match focused_block {
-            FocusedBlock::Device => Line::from(vec![
-                Span::from(config.device.infos.to_string()).bold(),
-                Span::from(" Infos"),
-                Span::from(" | "),
-                Span::from(config.device.toggle_power.to_string()).bold(),
-                Span::from(" Toggle Power"),
-                Span::from(" | "),
-                Span::from(config.device.doctor.to_string()).bold(),
-                Span::from(" Doctor"),
-                Span::from(" | "),
-                Span::from("ctrl+r").bold(),
-                Span::from(" Switch Mode"),
-                Span::from(" | "),
-                Span::from("⇄").bold(),
-                Span::from(" Nav"),
-            ]),
+            FocusedBlock::Device => {
+                let mut spans = vec![
+                    Span::from(config.device.infos.to_string()).bold(),
+                    Span::from(" Infos"),
+                    Span::from(" | "),
+                    Span::from(config.device.toggle_power.to_string()).bold(),
+                    Span::from(" Toggle Power"),
+                    Span::from(" | "),
+                    Span::from(config.device.doctor.to_string()).bold(),
+                    Span::from(" Doctor"),
+                    Span::from(" | "),
+                    Span::from("ctrl+r").bold(),
+                    Span::from(" Switch Mode"),
+                    Span::from(" | "),
+                    Span::from("⇄").bold(),
+                    Span::from(" Nav"),
+                ];
+                if view.is_multi() {
+                    spans.extend(adapter_nav_spans());
+                }
+                Line::from(spans)
+            }
             FocusedBlock::AdapterInfos | FocusedBlock::AccessPointInput => Line::from(vec![
                 Span::from("󱊷 ").bold(),
                 Span::from(" Discard"),

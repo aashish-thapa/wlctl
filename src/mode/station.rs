@@ -18,15 +18,31 @@ use ratatui::{
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::{
-    app::FocusedBlock,
+    app::{AdapterView, FocusedBlock},
     config::Config,
-    device::Device,
+    device::{Device, adapter_nav_spans},
     event::Event,
     mode::station::{known_network::KnownNetwork, share::Share, speed_test::SpeedTest},
     notification::{Notification, NotificationLevel},
 };
 
 use network::Network;
+
+/// Row for an adapter that is *not* the active Station. Runtime columns are
+/// dashed out because state/scanning/frequency/security only exist on the
+/// active adapter; the name and mode are enough for the user to pick it.
+fn inactive_station_row<'a>(name: &str) -> Row<'a> {
+    Row::new(vec![
+        Line::from(name.to_string()).centered(),
+        Line::from("station").centered(),
+        Line::from("-").centered(),
+        Line::from("-").centered(),
+        Line::from("-").centered(),
+        Line::from("-").centered(),
+        Line::from("-").centered(),
+        Line::from("").centered(),
+    ])
+}
 
 /// Result of resolving the selected known networks table index,
 /// accounting for the ethernet row offset.
@@ -394,12 +410,41 @@ impl Station {
         ethernet_offset + self.known_networks.len() + unavail
     }
 
+    /// Row for the adapter currently active on this Station. Carries the full
+    /// set of runtime columns (state/scanning/frequency/security) plus an
+    /// optional active marker for the multi-adapter case.
+    fn active_device_row<'a>(&self, name: &str, device: &Device, marker: &str) -> Row<'a> {
+        let frequency = self
+            .diagnostic
+            .as_ref()
+            .and_then(|d| d.frequency)
+            .map(|freq| format!("{:.2} GHz", freq as f32 / 1000.))
+            .unwrap_or_else(|| "-".to_string());
+        let security = self
+            .diagnostic
+            .as_ref()
+            .and_then(|d| d.security.clone())
+            .unwrap_or_else(|| "-".to_string());
+
+        Row::new(vec![
+            Line::from(name.to_string()).centered(),
+            Line::from("station").centered(),
+            Line::from(if device.is_powered { "On" } else { "Off" }).centered(),
+            Line::from(self.state.to_string()).centered(),
+            Line::from(if self.is_scanning { "Yes" } else { "No" }).centered(),
+            Line::from(frequency).centered(),
+            Line::from(security).centered(),
+            Line::from(marker.to_string()).centered(),
+        ])
+    }
+
     pub fn render(
         &mut self,
         frame: &mut Frame,
         focused_block: FocusedBlock,
         device: &Device,
         config: Arc<Config>,
+        view: &AdapterView,
     ) {
         let (known_networks_block, new_networks_block, device_block, help_block) = {
             let chunks = Layout::default()
@@ -407,7 +452,7 @@ impl Station {
                 .constraints([
                     Constraint::Min(5),
                     Constraint::Min(5),
-                    Constraint::Length(5),
+                    Constraint::Length(AdapterView::BLOCK_HEIGHT),
                     Constraint::Length(2),
                 ])
                 .margin(1)
@@ -416,41 +461,14 @@ impl Station {
         };
 
         //
-        // Device
+        // Device — one row per adapter. Inactive rows carry only identity so
+        // the user can see and select them; station-specific columns are only
+        // populated for the active adapter.
         //
-        let row = Row::new(vec![
-            Line::from(device.name.clone()).centered(),
-            Line::from("station").centered(),
-            {
-                if device.is_powered {
-                    Line::from("On").centered()
-                } else {
-                    Line::from("Off").centered()
-                }
-            },
-            Line::from(self.state.to_string()).centered(),
-            Line::from(if self.is_scanning { "Yes" } else { "No" }).centered(),
-            Line::from({
-                if let Some(diagnostic) = &self.diagnostic {
-                    if let Some(freq) = diagnostic.frequency {
-                        format!("{:.2} GHz", freq as f32 / 1000.)
-                    } else {
-                        "-".to_string()
-                    }
-                } else {
-                    "-".to_string()
-                }
-            })
-            .centered(),
-            Line::from({
-                if let Some(diagnostic) = &self.diagnostic {
-                    diagnostic.security.clone().unwrap_or("-".to_string())
-                } else {
-                    "-".to_string()
-                }
-            })
-            .centered(),
-        ]);
+        let rows = view.build_rows(
+            |adapter, marker| self.active_device_row(&adapter.name, device, marker),
+            |adapter| inactive_station_row(&adapter.name),
+        );
 
         let widths = [
             Constraint::Length(10),
@@ -460,32 +478,37 @@ impl Station {
             Constraint::Length(10),
             Constraint::Length(10),
             Constraint::Length(15),
+            Constraint::Length(6),
         ];
 
-        let device_table = Table::new(vec![row], widths)
+        let device_table = Table::new(rows, widths)
             .header({
+                let labels = [
+                    "Name",
+                    "Mode",
+                    "Powered",
+                    "State",
+                    "Scanning",
+                    "Frequency",
+                    "Security",
+                    "Active",
+                ];
                 if focused_block == FocusedBlock::Device {
-                    Row::new(vec![
-                        Line::from("Name").yellow().centered(),
-                        Line::from("Mode").yellow().centered(),
-                        Line::from("Powered").yellow().centered(),
-                        Line::from("State").yellow().centered(),
-                        Line::from("Scanning").yellow().centered(),
-                        Line::from("Frequency").yellow().centered(),
-                        Line::from("Security").yellow().centered(),
-                    ])
+                    Row::new(
+                        labels
+                            .iter()
+                            .map(|l| Line::from(*l).yellow().centered())
+                            .collect::<Vec<_>>(),
+                    )
                     .style(Style::new().bold())
                     .bottom_margin(1)
                 } else {
-                    Row::new(vec![
-                        Line::from("Name").centered(),
-                        Line::from("Mode").centered(),
-                        Line::from("Powered").centered(),
-                        Line::from("State").centered(),
-                        Line::from("Scanning").centered(),
-                        Line::from("Frequency").centered(),
-                        Line::from("Security").centered(),
-                    ])
+                    Row::new(
+                        labels
+                            .iter()
+                            .map(|l| Line::from(*l).centered())
+                            .collect::<Vec<_>>(),
+                    )
                     .bottom_margin(1)
                 }
             })
@@ -524,7 +547,8 @@ impl Station {
                 Style::default()
             });
 
-        let mut device_state = TableState::default().with_selected(0);
+        let mut device_state =
+            TableState::default().with_selected(view.table_selection(focused_block));
         frame.render_stateful_widget(device_table, device_block, &mut device_state);
 
         //
@@ -786,25 +810,31 @@ impl Station {
         );
 
         let help_message = match focused_block {
-            FocusedBlock::Device => vec![Line::from(vec![
-                Span::from(config.station.start_scanning.to_string()).bold(),
-                Span::from(" Scan"),
-                Span::from(" | "),
-                Span::from(config.device.infos.to_string()).bold(),
-                Span::from(" Infos"),
-                Span::from(" | "),
-                Span::from(config.device.toggle_power.to_string()).bold(),
-                Span::from(" Toggle Power"),
-                Span::from(" | "),
-                Span::from(config.device.doctor.to_string()).bold(),
-                Span::from(" Doctor"),
-                Span::from(" | "),
-                Span::from("ctrl+r").bold(),
-                Span::from(" Switch Mode"),
-                Span::from(" | "),
-                Span::from("⇄").bold(),
-                Span::from(" Nav"),
-            ])],
+            FocusedBlock::Device => {
+                let mut spans = vec![
+                    Span::from(config.station.start_scanning.to_string()).bold(),
+                    Span::from(" Scan"),
+                    Span::from(" | "),
+                    Span::from(config.device.infos.to_string()).bold(),
+                    Span::from(" Infos"),
+                    Span::from(" | "),
+                    Span::from(config.device.toggle_power.to_string()).bold(),
+                    Span::from(" Toggle Power"),
+                    Span::from(" | "),
+                    Span::from(config.device.doctor.to_string()).bold(),
+                    Span::from(" Doctor"),
+                    Span::from(" | "),
+                    Span::from("ctrl+r").bold(),
+                    Span::from(" Switch Mode"),
+                    Span::from(" | "),
+                    Span::from("⇄").bold(),
+                    Span::from(" Nav"),
+                ];
+                if view.is_multi() {
+                    spans.extend(adapter_nav_spans());
+                }
+                vec![Line::from(spans)]
+            }
             FocusedBlock::KnownNetworks => {
                 if frame.area().width <= 130 {
                     vec![
