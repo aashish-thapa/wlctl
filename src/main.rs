@@ -13,7 +13,7 @@ use wlctl::{
     handler::{handle_key_events, toggle_connect},
     nm::Mode,
     notification::{Notification, NotificationLevel},
-    rfkill,
+    portal, rfkill,
     tui::Tui,
 };
 
@@ -26,8 +26,10 @@ async fn main() -> Result<()> {
 
     let args = cli::cli().get_matches();
 
-    if let Some(("doctor", _)) = args.subcommand() {
-        return doctor::run().await;
+    match args.subcommand() {
+        Some(("doctor", _)) => return doctor::run().await,
+        Some(("portal", _)) => return portal::run_once().await,
+        _ => {}
     }
 
     rfkill::check()?;

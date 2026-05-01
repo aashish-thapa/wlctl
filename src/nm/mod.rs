@@ -219,6 +219,21 @@ impl NMClient {
         Ok(Connectivity::from(state))
     }
 
+    /// Fetch the URL NetworkManager probes for connectivity. Opening this URL
+    /// in a browser will be intercepted and redirected by a captive portal,
+    /// which is exactly the flow we want when auto-launching a login page.
+    pub async fn get_connectivity_check_uri(&self) -> Result<String> {
+        let proxy = Proxy::new(
+            &self.connection,
+            NM_BUS_NAME,
+            NM_PATH,
+            "org.freedesktop.NetworkManager",
+        )
+        .await?;
+
+        Ok(proxy.get_property("ConnectivityCheckUri").await?)
+    }
+
     /// Get device state
     pub async fn get_device_state(&self, device_path: &str) -> Result<DeviceState> {
         let proxy = Proxy::new(

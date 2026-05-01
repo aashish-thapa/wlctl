@@ -30,6 +30,8 @@ pub mod nm;
 
 pub mod doctor;
 
+pub mod portal;
+
 pub fn nm_network_name(name: &str) -> String {
     // NetworkManager handles SSID encoding internally, so we just return as-is
     name.to_string()
