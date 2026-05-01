@@ -43,24 +43,55 @@ Needs NetworkManager running. [Nerd Fonts](https://www.nerdfonts.com/) optional,
 
 `wlctl` to launch the TUI. `wlctl doctor` when something's broken and you want to know which layer.
 
+### Global
+
 | Action | Key |
 |---|---|
 | Switch panel | `Tab` / `Shift+Tab` |
 | Move | `j` `k` / arrows |
-| Scan | `s` |
-| Connect / disconnect | `Space` or `Enter` |
-| Hidden network | `h` |
-| Toggle auto-connect | `t` |
-| Forget network | `d` |
-| Show all known | `a` |
-| QR share | `p` |
-| Speed test (needs `speedtest-cli`) | `Shift+S` |
-| Device info | `i` |
-| Toggle power | `o` |
-| Switch adapter mode | `Ctrl+R` |
-| Doctor | `?` |
+| Switch adapter mode (Station ↔ AP) | `Ctrl+R` |
 | Quit | `q` / `Ctrl+C` |
 | Dismiss popup | `Esc` |
+
+### Known networks
+
+| Action | Key |
+|---|---|
+| Connect / disconnect | `Space` or `Enter` |
+| Toggle auto-connect | `t` |
+| Forget network | `d` |
+| Show all | `a` |
+| QR share | `p` |
+| Speed test (needs `speedtest-cli`) | `Shift+S` |
+
+### New networks
+
+| Action | Key |
+|---|---|
+| Connect / disconnect | `Space` or `Enter` |
+| Connect to hidden | `h` |
+| Show all | `a` |
+
+### Device panel
+
+| Action | Key |
+|---|---|
+| Adapter info | `i` |
+| Toggle power | `o` |
+| Doctor | `?` |
+
+### Station mode
+
+| Action | Key |
+|---|---|
+| Scan | `s` |
+
+### Access Point mode
+
+| Action | Key |
+|---|---|
+| Start AP | `n` |
+| Stop AP | `x` |
 
 ## Config
 
