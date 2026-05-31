@@ -15,6 +15,13 @@ pub use types::*;
 const NM_BUS_NAME: &str = "org.freedesktop.NetworkManager";
 const NM_PATH: &str = "/org/freedesktop/NetworkManager";
 
+/// Reads a string field out of one NetworkManager settings section, returning
+/// `None` if the key is absent or not string-convertible.
+fn setting_str(section: &HashMap<String, OwnedValue>, key: &str) -> Option<String> {
+    let value = section.get(key)?.try_clone().ok()?;
+    String::try_from(value).ok()
+}
+
 /// Main NetworkManager client
 #[derive(Clone, Debug)]
 pub struct NMClient {
@@ -476,6 +483,36 @@ impl NMClient {
         wifi_connections.sort_by_key(|c| std::cmp::Reverse(c.timestamp));
 
         Ok(wifi_connections)
+    }
+
+    /// List saved VPN / WireGuard connection profiles, sorted by name.
+    pub async fn get_vpn_connections(&self) -> Result<Vec<VpnConnectionInfo>> {
+        let mut vpns = Vec::new();
+
+        for conn_path in self.get_connections().await? {
+            let Ok(settings) = self.get_connection_settings(conn_path.as_str()).await else {
+                continue;
+            };
+            let Some(connection) = settings.get("connection") else {
+                continue;
+            };
+
+            let kind = match setting_str(connection, "type").as_deref() {
+                Some("vpn") => VpnKind::Vpn,
+                Some("wireguard") => VpnKind::WireGuard,
+                _ => continue,
+            };
+
+            vpns.push(VpnConnectionInfo {
+                path: conn_path.to_string(),
+                id: setting_str(connection, "id").unwrap_or_default(),
+                uuid: setting_str(connection, "uuid").unwrap_or_default(),
+                kind,
+            });
+        }
+
+        vpns.sort_by(|a, b| a.id.to_lowercase().cmp(&b.id.to_lowercase()));
+        Ok(vpns)
     }
 
     /// Connect to a network using an existing connection profile
