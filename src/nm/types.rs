@@ -288,6 +288,33 @@ pub struct ConnectionInfo {
     pub security: SecurityType,
 }
 
+/// Kind of VPN profile, mirroring NetworkManager's `connection.type`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VpnKind {
+    /// Plugin-based VPN (openvpn, openconnect, wireguard-via-plugin, ...).
+    Vpn,
+    /// NetworkManager-native WireGuard.
+    WireGuard,
+}
+
+impl fmt::Display for VpnKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            VpnKind::Vpn => write!(f, "vpn"),
+            VpnKind::WireGuard => write!(f, "wireguard"),
+        }
+    }
+}
+
+/// Saved VPN connection profile.
+#[derive(Debug, Clone)]
+pub struct VpnConnectionInfo {
+    pub path: String,
+    pub id: String,
+    pub uuid: String,
+    pub kind: VpnKind,
+}
+
 /// Active connection state
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActiveConnectionState {
