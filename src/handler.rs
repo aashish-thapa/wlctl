@@ -115,6 +115,91 @@ async fn start_doctor(app: &mut App, sender: UnboundedSender<Event>) {
     });
 }
 
+/// List views (no text input) from which the global VPN shortcut may fire.
+/// Excludes auth/input/popup blocks so the bound char isn't swallowed mid-typing.
+fn is_navigational(focused: FocusedBlock) -> bool {
+    matches!(
+        focused,
+        FocusedBlock::Device
+            | FocusedBlock::KnownNetworks
+            | FocusedBlock::NewNetworks
+            | FocusedBlock::AccessPoint
+            | FocusedBlock::AccessPointConnectedDevices
+    )
+}
+
+/// Opens the VPN modal, loading the saved profiles up front. On failure the
+/// modal isn't opened and the error surfaces as a notification.
+async fn open_vpn(app: &mut App, sender: &UnboundedSender<Event>) {
+    match crate::vpn::VpnModal::load(&app.client).await {
+        Ok(modal) => {
+            app.vpn = Some(modal);
+            app.focused_block = FocusedBlock::Vpn;
+        }
+        Err(e) => {
+            let _ = Notification::send(
+                format!("Could not load VPN connections: {e}"),
+                notification::NotificationLevel::Error,
+                sender,
+            );
+        }
+    }
+}
+
+/// Handles keys while the VPN modal is open: navigate, toggle the selected
+/// tunnel, or close. Toggling re-reads state so the row reflects the change
+/// without waiting for the next tick.
+async fn handle_vpn_keys(
+    app: &mut App,
+    key_event: KeyEvent,
+    sender: &UnboundedSender<Event>,
+) -> Result<()> {
+    let Some(modal) = &mut app.vpn else {
+        return Ok(());
+    };
+
+    match key_event.code {
+        KeyCode::Esc => {
+            app.vpn = None;
+            app.focused_block = app.default_focus();
+        }
+        KeyCode::Char('j') | KeyCode::Down => modal.move_selection(1),
+        KeyCode::Char('k') | KeyCode::Up => modal.move_selection(-1),
+        KeyCode::Enter | KeyCode::Char(' ') => {
+            let Some(entry) = modal.selected_entry().cloned() else {
+                return Ok(());
+            };
+            let bringing_up = !entry.is_active();
+
+            match crate::vpn::toggle(&app.client, &entry).await {
+                Ok(()) => {
+                    let verb = if bringing_up {
+                        "Connecting"
+                    } else {
+                        "Disconnecting"
+                    };
+                    Notification::send(
+                        format!("{verb} VPN {}", entry.info.id),
+                        notification::NotificationLevel::Info,
+                        sender,
+                    )?;
+                    modal.refresh(&app.client).await?;
+                }
+                Err(e) => {
+                    Notification::send(
+                        format!("VPN {} failed: {e}", entry.info.id),
+                        notification::NotificationLevel::Error,
+                        sender,
+                    )?;
+                }
+            }
+        }
+        _ => {}
+    }
+
+    Ok(())
+}
+
 async fn toggle_device_power(sender: UnboundedSender<Event>, device: &Device) -> Result<()> {
     if device.is_powered {
         match device.power_off().await {
@@ -225,12 +310,27 @@ pub async fn handle_key_events(
         return Ok(());
     }
 
+    // VPN modal captures all keys while open.
+    if app.focused_block == FocusedBlock::Vpn {
+        handle_vpn_keys(app, key_event, &sender).await?;
+        return Ok(());
+    }
+
     // Device-focus shortcut: run the doctor. Available in any power state.
     if app.focused_block == FocusedBlock::Device
         && let KeyCode::Char(c) = key_event.code
         && c == config.device.doctor
     {
         start_doctor(app, sender).await;
+        return Ok(());
+    }
+
+    // Global shortcut: open the VPN modal from any non-input list view.
+    if is_navigational(app.focused_block)
+        && let KeyCode::Char(c) = key_event.code
+        && c == config.vpn
+    {
+        open_vpn(app, &sender).await;
         return Ok(());
     }
 

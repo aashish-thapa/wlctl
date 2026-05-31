@@ -9,7 +9,7 @@ use crate::nm::{Mode, NMClient};
 use crate::{
     adapter::Adapter, agent::AuthAgent, config::Config, device::Device, doctor::DoctorModal,
     event::Event, mode::station::auth::Auth, mode::station::network::Network,
-    notification::Notification, reset::Reset,
+    notification::Notification, reset::Reset, vpn::VpnModal,
 };
 
 /// Marker glyph rendered in the Active column for the currently active adapter.
@@ -33,6 +33,7 @@ pub enum FocusedBlock {
     SpeedTest,
     HiddenSsidInput,
     Doctor,
+    Vpn,
 }
 
 /// A lightweight handle to a WiFi adapter known to NetworkManager.
@@ -157,6 +158,9 @@ pub struct App {
     /// applies results that carry the current id. Dismissing also bumps it, so
     /// in-flight results never resurrect a closed modal.
     pub doctor_run_id: u64,
+    /// Open VPN modal, if any. Refreshed each tick while open so on/off state
+    /// stays live as tunnels come up and down.
+    pub vpn: Option<VpnModal>,
 }
 
 impl App {
@@ -220,7 +224,13 @@ Error: {}",
             network_pending_auth: None,
             doctor: None,
             doctor_run_id: 0,
+            vpn: None,
         })
+    }
+
+    /// Focus the app should return to when a modal/overlay closes.
+    pub fn default_focus(&self) -> FocusedBlock {
+        Self::default_focus_for(&self.device)
     }
 
     pub fn adapter_count(&self) -> usize {
@@ -359,6 +369,11 @@ Error: {}",
 
         self.device.refresh().await?;
         self.adapter.refresh().await?;
+
+        // Keep the VPN modal's on/off state live while it's open.
+        if let Some(modal) = &mut self.vpn {
+            modal.refresh(&self.client).await?;
+        }
 
         Ok(())
     }

@@ -56,6 +56,12 @@ pub fn render(app: &mut App, frame: &mut Frame) {
             crate::doctor::render_modal(frame, modal);
         }
 
+        if app.focused_block == FocusedBlock::Vpn
+            && let Some(modal) = &app.vpn
+        {
+            crate::vpn::render_modal(frame, modal);
+        }
+
         if app.focused_block == FocusedBlock::HiddenSsidInput {
             app.auth.hidden.render(frame);
         }
