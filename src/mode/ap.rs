@@ -631,7 +631,7 @@ impl AccessPoint {
             frame.render_widget(connected_devices_list, connected_devices_block);
         }
 
-        let help_message = match focused_block {
+        let mut help_message = match focused_block {
             FocusedBlock::Device => {
                 let mut spans = vec![
                     Span::from(config.device.infos.to_string()).bold(),
@@ -676,6 +676,16 @@ impl AccessPoint {
             ]),
             _ => Line::from(""),
         };
+
+        // Advertise the global VPN shortcut from the AP list views.
+        if matches!(
+            focused_block,
+            FocusedBlock::Device | FocusedBlock::AccessPoint
+        ) {
+            help_message
+                .spans
+                .extend(crate::device::vpn_hint_spans(config.vpn));
+        }
 
         let help_message = help_message.centered().blue();
         frame.render_widget(help_message, help_block);
