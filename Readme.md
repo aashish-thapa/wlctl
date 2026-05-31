@@ -19,6 +19,7 @@
 - Station and Access Point modes
 - WPA Enterprise (802.1X)
 - Multiple adapters — pick which one to drive, switch on the fly
+- VPN connections — toggle saved VPN / WireGuard profiles, like nmtui
 - `wlctl doctor` — walks rfkill, driver, association, IP, DHCP, gateway, DNS, internet
 - QR code sharing, hidden networks, speed test
 - Vim keys, every binding configurable
@@ -50,6 +51,7 @@ Needs NetworkManager running. [Nerd Fonts](https://www.nerdfonts.com/) optional,
 | Switch panel | `Tab` / `Shift+Tab` |
 | Move | `j` `k` / arrows |
 | Switch adapter mode (Station ↔ AP) | `Ctrl+R` |
+| VPN connections | `v` |
 | Quit | `q` / `Ctrl+C` |
 | Dismiss popup | `Esc` |
 
@@ -101,6 +103,7 @@ Needs NetworkManager running. [Nerd Fonts](https://www.nerdfonts.com/) optional,
 switch = "r"
 mode = "station"
 esc_quit = false
+vpn = "v"
 
 [device]
 infos = "i"
@@ -133,6 +136,7 @@ stop = "x"
 | Backend | iwd | NetworkManager |
 | Coexists with default desktop network stack | no | yes |
 | Multi-adapter selector | — | yes |
+| VPN connection toggle | — | yes |
 | `doctor` subcommand | — | yes |
 
 ## Credits
