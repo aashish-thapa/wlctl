@@ -14,6 +14,9 @@ pub struct Config {
     #[serde(default = "default_esc_quit")]
     pub esc_quit: bool,
 
+    #[serde(default = "default_vpn")]
+    pub vpn: char,
+
     #[serde(default)]
     pub device: Device,
 
@@ -34,6 +37,10 @@ fn default_device_mode() -> String {
 
 fn default_esc_quit() -> bool {
     false
+}
+
+fn default_vpn() -> char {
+    'v'
 }
 
 // Device

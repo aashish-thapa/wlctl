@@ -219,6 +219,9 @@ impl Device {
                     Span::from(" | "),
                     Span::from(config.device.doctor.to_string()).bold(),
                     Span::from(" Doctor"),
+                    Span::from(" | "),
+                    Span::from(config.vpn.to_string()).bold(),
+                    Span::from(" VPN"),
                 ];
                 if multi {
                     spans.extend(adapter_nav_spans());
