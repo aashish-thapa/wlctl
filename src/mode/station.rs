@@ -809,7 +809,7 @@ impl Station {
             &mut self.new_networks_state,
         );
 
-        let help_message = match focused_block {
+        let mut help_message = match focused_block {
             FocusedBlock::Device => {
                 let mut spans = vec![
                     Span::from(config.station.start_scanning.to_string()).bold(),
@@ -1003,6 +1003,16 @@ impl Station {
                 Span::from(" Discard"),
             ])],
         };
+
+        // Advertise the global VPN shortcut from every list view by appending
+        // it to the last help row.
+        if matches!(
+            focused_block,
+            FocusedBlock::Device | FocusedBlock::KnownNetworks | FocusedBlock::NewNetworks
+        ) && let Some(last) = help_message.last_mut()
+        {
+            last.spans.extend(crate::device::vpn_hint_spans(config.vpn));
+        }
 
         let help_message = Paragraph::new(help_message).centered().blue();
 

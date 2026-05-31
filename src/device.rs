@@ -219,10 +219,8 @@ impl Device {
                     Span::from(" | "),
                     Span::from(config.device.doctor.to_string()).bold(),
                     Span::from(" Doctor"),
-                    Span::from(" | "),
-                    Span::from(config.vpn.to_string()).bold(),
-                    Span::from(" VPN"),
                 ];
+                spans.extend(vpn_hint_spans(config.vpn));
                 if multi {
                     spans.extend(adapter_nav_spans());
                 }
@@ -246,6 +244,16 @@ pub fn adapter_nav_spans<'a>() -> Vec<Span<'a>> {
         Span::from(" | "),
         Span::from("⏎").bold(),
         Span::from(" Activate"),
+    ]
+}
+
+/// Help-line fragment advertising the global VPN shortcut. Appended to the
+/// active help row so the binding is discoverable from every list view.
+pub fn vpn_hint_spans<'a>(vpn_key: char) -> Vec<Span<'a>> {
+    vec![
+        Span::from(" | "),
+        Span::from(vpn_key.to_string()).bold(),
+        Span::from(" VPN"),
     ]
 }
 
