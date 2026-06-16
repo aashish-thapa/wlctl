@@ -37,14 +37,15 @@ fn setting_u64(section: &HashMap<String, OwnedValue>, key: &str) -> Option<u64> 
     u64::try_from(value).ok()
 }
 
-/// Encodes the IPv4 entries of `dns` for NM's `ipv4.dns` property (`au`). Each
-/// address is the host-order `in_addr` — i.e. the 4 octets `a.b.c.d` packed as
-/// `a | b<<8 | c<<16 | d<<24` — which is what libnm expects on little-endian
-/// hosts (every platform NetworkManager runs on). IPv6 entries are skipped.
+/// Encodes the IPv4 entries of `dns` for NM's `ipv4.dns` property (`au`). NM
+/// stores each value straight into an `in_addr_t`, so the integer's in-memory
+/// bytes must equal the address in network order — that's the native-endian
+/// reading of the octets (`from_ne_bytes`), correct on both little- and
+/// big-endian hosts. IPv6 entries are skipped.
 fn ipv4_dns_words(dns: &[IpAddr]) -> Vec<u32> {
     dns.iter()
         .filter_map(|ip| match ip {
-            IpAddr::V4(v) => Some(u32::from_le_bytes(v.octets())),
+            IpAddr::V4(v) => Some(u32::from_ne_bytes(v.octets())),
             IpAddr::V6(_) => None,
         })
         .collect()
@@ -1351,10 +1352,10 @@ mod dns_encoding_tests {
     use std::str::FromStr;
 
     #[test]
-    fn ipv4_dns_words_packs_octets_low_to_high() {
-        // 1.2.3.4 -> a | b<<8 | c<<16 | d<<24
+    fn ipv4_dns_words_use_native_in_addr_order() {
+        // The encoded u32's in-memory bytes must equal the address octets.
         let dns = [IpAddr::from_str("1.2.3.4").unwrap()];
-        assert_eq!(ipv4_dns_words(&dns), vec![0x04_03_02_01]);
+        assert_eq!(ipv4_dns_words(&dns)[0].to_ne_bytes(), [1, 2, 3, 4]);
         // IPv6 entries are skipped.
         let mixed = [
             IpAddr::from_str("10.2.0.1").unwrap(),
@@ -1362,7 +1363,7 @@ mod dns_encoding_tests {
         ];
         assert_eq!(
             ipv4_dns_words(&mixed),
-            vec![u32::from_le_bytes([10, 2, 0, 1])]
+            vec![u32::from_ne_bytes([10, 2, 0, 1])]
         );
     }
 
