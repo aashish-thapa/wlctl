@@ -43,9 +43,11 @@ pub fn render_modal(frame: &mut Frame, modal: &VpnModal) {
 /// selected or the tunnel is down.
 fn detail(modal: &VpnModal) -> Paragraph<'static> {
     if modal.import_input.is_some() {
-        return Paragraph::new("Path to a WireGuard .conf  —  Enter to import, Esc to cancel")
-            .alignment(Alignment::Center)
-            .style(Style::default().fg(Color::DarkGray));
+        return Paragraph::new(
+            "Paste a WireGuard config or type a .conf path  —  Enter to import, Esc to cancel",
+        )
+        .alignment(Alignment::Center)
+        .style(Style::default().fg(Color::DarkGray));
     }
 
     let text = modal
@@ -107,7 +109,7 @@ fn render_empty(frame: &mut Frame, area: Rect) {
     let p = Paragraph::new(vec![
         Line::from("No VPN connections configured.").centered(),
         Line::from(""),
-        Line::from("Add one with nmtui or your desktop's network settings.")
+        Line::from("Press 'i' to import a WireGuard config (paste or file path).")
             .centered()
             .style(Style::default().fg(Color::DarkGray)),
     ])
@@ -162,12 +164,26 @@ fn render_list(frame: &mut Frame, area: Rect, modal: &VpnModal) {
 }
 
 fn hint(modal: &VpnModal) -> Paragraph<'static> {
-    // While importing, the hint line is the path input field.
+    // While importing, the hint line is the input field. A pasted config is
+    // multi-line, so show a summary rather than the raw text; a typed path is
+    // shown inline with a cursor.
     if let Some(buf) = &modal.import_input {
-        let line = Line::from(vec![
-            Span::from("Path: ").bold(),
-            Span::from(format!("{buf}_")),
-        ]);
+        let looks_like_config =
+            buf.contains('\n') || buf.to_ascii_lowercase().contains("[interface]");
+        let line = if looks_like_config {
+            Line::from(vec![
+                Span::from("Config pasted ").bold(),
+                Span::from(format!(
+                    "({} lines) — press Enter to import",
+                    buf.lines().count()
+                )),
+            ])
+        } else {
+            Line::from(vec![
+                Span::from("Path: ").bold(),
+                Span::from(format!("{buf}_")),
+            ])
+        };
         return Paragraph::new(line)
             .alignment(Alignment::Left)
             .style(Style::default().fg(Color::White));

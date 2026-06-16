@@ -12,7 +12,10 @@ use crate::mode::station::speed_test::SpeedTest;
 use crate::nm::{Mode, SecurityType};
 use crate::notification::{self, Notification};
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{
+    DisableBracketedPaste, EnableBracketedPaste, KeyCode, KeyEvent, KeyModifiers,
+};
+use crossterm::execute;
 use tokio::sync::mpsc::UnboundedSender;
 use tui_input::backend::crossterm::EventHandler;
 
@@ -146,6 +149,30 @@ async fn open_vpn(app: &mut App, sender: &UnboundedSender<Event>) {
     }
 }
 
+/// Toggles terminal bracketed paste. Enabled only while the VPN import field is
+/// open so a pasted config arrives as one `Event::Paste`; the rest of the app
+/// keeps its plain key-flood paste behavior. Best-effort — failure just means
+/// pasting won't be captured, while typing still works.
+fn set_bracketed_paste(on: bool) {
+    let mut out = std::io::stdout();
+    let _ = if on {
+        execute!(out, EnableBracketedPaste)
+    } else {
+        execute!(out, DisableBracketedPaste)
+    };
+}
+
+/// Appends pasted text to the VPN import field when it's open. Lets users paste
+/// a whole WireGuard config (or a path) instead of typing it.
+pub fn handle_paste(app: &mut App, text: String) {
+    if app.focused_block == FocusedBlock::Vpn
+        && let Some(modal) = &mut app.vpn
+        && let Some(buf) = &mut modal.import_input
+    {
+        buf.push_str(&text);
+    }
+}
+
 /// Handles keys while the VPN modal is open: navigate, toggle the selected
 /// tunnel, or close. Toggling re-reads state so the row reflects the change
 /// without waiting for the next tick.
@@ -158,10 +185,14 @@ async fn handle_vpn_keys(
         return Ok(());
     };
 
-    // While importing, the modal is a path input field: capture all keys.
+    // While importing, the modal captures all keys: type/paste a file path or a
+    // full WireGuard config, Enter to import, Esc to cancel.
     if modal.import_input.is_some() {
         match key_event.code {
-            KeyCode::Esc => modal.import_input = None,
+            KeyCode::Esc => {
+                modal.import_input = None;
+                set_bracketed_paste(false);
+            }
             KeyCode::Backspace => {
                 if let Some(buf) = &mut modal.import_input {
                     buf.pop();
@@ -173,14 +204,18 @@ async fn handle_vpn_keys(
                 }
             }
             KeyCode::Enter => {
-                let path = modal
-                    .import_input
-                    .take()
-                    .unwrap_or_default()
-                    .trim()
-                    .to_string();
-                if !path.is_empty() {
-                    match crate::vpn::import_from_file(&app.client, &path).await {
+                let raw = modal.import_input.take().unwrap_or_default();
+                set_bracketed_paste(false);
+                let input = raw.trim();
+                if !input.is_empty() {
+                    // A pasted config contains an [Interface] section; anything
+                    // else is treated as a path to a `.conf` file.
+                    let result = if input.to_ascii_lowercase().contains("[interface]") {
+                        crate::vpn::import_from_text(&app.client, input).await
+                    } else {
+                        crate::vpn::import_from_file(&app.client, input).await
+                    };
+                    match result {
                         Ok(id) => {
                             Notification::send(
                                 format!("Imported VPN {id}"),
@@ -282,7 +317,10 @@ async fn handle_vpn_keys(
                 modal.pending_delete = true;
             }
         }
-        KeyCode::Char('i') => modal.import_input = Some(String::new()),
+        KeyCode::Char('i') => {
+            modal.import_input = Some(String::new());
+            set_bracketed_paste(true);
+        }
         _ => {}
     }
 

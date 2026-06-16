@@ -7,7 +7,7 @@ use ratatui::{
     Terminal,
     backend::Backend,
     crossterm::{
-        event::DisableMouseCapture,
+        event::{DisableBracketedPaste, DisableMouseCapture},
         terminal::{self, LeaveAlternateScreen},
     },
 };
@@ -47,7 +47,14 @@ impl<B: Backend> Tui<B> {
 
     fn reset() -> Result<()> {
         terminal::disable_raw_mode()?;
-        ratatui::crossterm::execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture)?;
+        // DisableBracketedPaste is harmless if it was never enabled; it ensures
+        // the terminal isn't left in bracketed-paste mode after an import.
+        ratatui::crossterm::execute!(
+            io::stdout(),
+            LeaveAlternateScreen,
+            DisableMouseCapture,
+            DisableBracketedPaste
+        )?;
         Ok(())
     }
 
