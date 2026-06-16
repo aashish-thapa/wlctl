@@ -7,7 +7,7 @@ use ratatui::{
     Terminal,
     backend::Backend,
     crossterm::{
-        event::{DisableBracketedPaste, DisableMouseCapture},
+        event::{DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste},
         terminal::{self, LeaveAlternateScreen},
     },
 };
@@ -61,6 +61,18 @@ impl<B: Backend> Tui<B> {
     pub fn exit(&mut self) -> Result<()> {
         Self::reset()?;
         self.terminal.show_cursor()?;
+        Ok(())
+    }
+
+    /// Enables or disables terminal bracketed paste. Used to scope paste capture
+    /// to text-input contexts (e.g. the VPN config import field) so a paste
+    /// arrives as a single event instead of a flood of key presses.
+    pub fn set_bracketed_paste(&self, enabled: bool) -> Result<()> {
+        if enabled {
+            ratatui::crossterm::execute!(io::stdout(), EnableBracketedPaste)?;
+        } else {
+            ratatui::crossterm::execute!(io::stdout(), DisableBracketedPaste)?;
+        }
         Ok(())
     }
 }

@@ -15,13 +15,13 @@ use crate::nm::ActiveConnectionState;
 pub fn render_modal(frame: &mut Frame, modal: &VpnModal) {
     let area = popup_area(frame.area());
 
+    let block = vpn_block();
+    let inner = block.inner(area);
     frame.render_widget(Clear, area);
-    frame.render_widget(vpn_block(), area);
-
-    let inner = vpn_block().inner(area);
+    frame.render_widget(block, area);
 
     // The import flow takes over the whole body with its own paste box.
-    if modal.import_input.is_some() {
+    if modal.import_buffer().is_some() {
         render_import(frame, inner, modal);
         return;
     }
@@ -49,7 +49,7 @@ pub fn render_modal(frame: &mut Frame, modal: &VpnModal) {
 /// Draws the WireGuard import view: instructions, a bordered paste/path box,
 /// and the action hints. Replaces the list while importing.
 fn render_import(frame: &mut Frame, area: Rect, modal: &VpnModal) {
-    let buf = modal.import_input.as_deref().unwrap_or("");
+    let buf = modal.import_buffer().unwrap_or("");
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -227,11 +227,7 @@ fn render_list(frame: &mut Frame, area: Rect, modal: &VpnModal) {
 
 fn hint(modal: &VpnModal) -> Paragraph<'static> {
     // A pending delete swaps the hint line for a confirmation prompt.
-    if modal.pending_delete {
-        let name = modal
-            .selected_entry()
-            .map(|e| e.info.id.clone())
-            .unwrap_or_default();
+    if let Some(name) = modal.pending_delete() {
         let line = Line::from(vec![
             Span::from(format!("Delete '{name}'?  ")),
             Span::from("y").bold(),

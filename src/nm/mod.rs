@@ -37,6 +37,30 @@ fn setting_u64(section: &HashMap<String, OwnedValue>, key: &str) -> Option<u64> 
     u64::try_from(value).ok()
 }
 
+/// Encodes the IPv4 entries of `dns` for NM's `ipv4.dns` property (`au`). Each
+/// address is the host-order `in_addr` — i.e. the 4 octets `a.b.c.d` packed as
+/// `a | b<<8 | c<<16 | d<<24` — which is what libnm expects on little-endian
+/// hosts (every platform NetworkManager runs on). IPv6 entries are skipped.
+fn ipv4_dns_words(dns: &[IpAddr]) -> Vec<u32> {
+    dns.iter()
+        .filter_map(|ip| match ip {
+            IpAddr::V4(v) => Some(u32::from_le_bytes(v.octets())),
+            IpAddr::V6(_) => None,
+        })
+        .collect()
+}
+
+/// Encodes the IPv6 entries of `dns` for NM's `ipv6.dns` property (`aay`): each
+/// address as its 16 raw bytes. IPv4 entries are skipped.
+fn ipv6_dns_bytes(dns: &[IpAddr]) -> Vec<Vec<u8>> {
+    dns.iter()
+        .filter_map(|ip| match ip {
+            IpAddr::V6(v) => Some(v.octets().to_vec()),
+            IpAddr::V4(_) => None,
+        })
+        .collect()
+}
+
 /// Main NetworkManager client
 #[derive(Clone, Debug)]
 pub struct NMClient {
@@ -523,6 +547,7 @@ impl NMClient {
                 id: setting_str(connection, "id").unwrap_or_default(),
                 uuid: setting_str(connection, "uuid").unwrap_or_default(),
                 kind,
+                interface_name: setting_str(connection, "interface-name").unwrap_or_default(),
                 // NetworkManager omits `autoconnect` when it's at its default of true.
                 autoconnect: setting_bool(connection, "autoconnect").unwrap_or(true),
                 timestamp: setting_u64(connection, "timestamp").unwrap_or(0),
@@ -672,16 +697,7 @@ impl NMClient {
         } else {
             ipv4.insert("method", Value::from("manual"));
             ipv4.insert("address-data", Value::from(v4));
-            // NM's ipv4.dns is `au`: each address as the 4 octets read as a
-            // native-endian u32 (i.e. network byte order on the wire).
-            let dns4: Vec<u32> = cfg
-                .dns
-                .iter()
-                .filter_map(|ip| match ip {
-                    IpAddr::V4(v) => Some(u32::from_le_bytes(v.octets())),
-                    IpAddr::V6(_) => None,
-                })
-                .collect();
+            let dns4 = ipv4_dns_words(&cfg.dns);
             if !dns4.is_empty() {
                 ipv4.insert("dns", Value::from(dns4));
             }
@@ -697,6 +713,10 @@ impl NMClient {
         } else {
             ipv6.insert("method", Value::from("manual"));
             ipv6.insert("address-data", Value::from(v6));
+            let dns6 = ipv6_dns_bytes(&cfg.dns);
+            if !dns6.is_empty() {
+                ipv6.insert("dns", Value::from(dns6));
+            }
         }
         settings.insert("ipv6", ipv6);
 
@@ -1321,5 +1341,41 @@ impl NMClient {
             .await?;
 
         Ok(result.1)
+    }
+}
+
+#[cfg(test)]
+mod dns_encoding_tests {
+    use super::{ipv4_dns_words, ipv6_dns_bytes};
+    use std::net::IpAddr;
+    use std::str::FromStr;
+
+    #[test]
+    fn ipv4_dns_words_packs_octets_low_to_high() {
+        // 1.2.3.4 -> a | b<<8 | c<<16 | d<<24
+        let dns = [IpAddr::from_str("1.2.3.4").unwrap()];
+        assert_eq!(ipv4_dns_words(&dns), vec![0x04_03_02_01]);
+        // IPv6 entries are skipped.
+        let mixed = [
+            IpAddr::from_str("10.2.0.1").unwrap(),
+            IpAddr::from_str("fd00::1").unwrap(),
+        ];
+        assert_eq!(
+            ipv4_dns_words(&mixed),
+            vec![u32::from_le_bytes([10, 2, 0, 1])]
+        );
+    }
+
+    #[test]
+    fn ipv6_dns_bytes_emits_16_raw_bytes() {
+        let mixed = [
+            IpAddr::from_str("10.2.0.1").unwrap(),
+            IpAddr::from_str("fd00::1").unwrap(),
+        ];
+        let out = ipv6_dns_bytes(&mixed);
+        assert_eq!(out.len(), 1, "IPv4 entries are skipped");
+        assert_eq!(out[0].len(), 16);
+        assert_eq!(out[0][0], 0xfd);
+        assert_eq!(out[0][15], 0x01);
     }
 }

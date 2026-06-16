@@ -118,18 +118,19 @@ fn parse_cidr(s: &str) -> Result<(IpAddr, u8)> {
     };
     let ip =
         IpAddr::from_str(addr_part.trim()).map_err(|_| anyhow!("invalid address '{addr_part}'"))?;
+    let max = if ip.is_ipv4() { 32 } else { 128 };
     let prefix = match prefix_part {
-        Some(p) => p
-            .trim()
-            .parse()
-            .map_err(|_| anyhow!("invalid prefix in '{s}'"))?,
-        None => {
-            if ip.is_ipv4() {
-                32
-            } else {
-                128
+        Some(p) => {
+            let prefix: u8 = p
+                .trim()
+                .parse()
+                .map_err(|_| anyhow!("invalid prefix in '{s}'"))?;
+            if prefix > max {
+                bail!("prefix /{prefix} out of range in '{s}'");
             }
+            prefix
         }
+        None => max,
     };
     Ok((ip, prefix))
 }

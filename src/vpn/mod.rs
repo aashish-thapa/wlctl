@@ -8,7 +8,7 @@ mod wg;
 
 pub use render::render_modal;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use anyhow::{Context, Result};
 
@@ -65,17 +65,22 @@ fn format_duration(secs: u64) -> String {
     }
 }
 
-/// Interactive modal state: the profile list plus a selection cursor.
+/// A transient sub-mode layered over the list. Modeled as one enum so the modal
+/// can never be in two prompts at once, and so the delete target is captured up
+/// front (immune to the list reordering under a background refresh).
+pub enum VpnPrompt {
+    /// Awaiting y/n to delete the named profile at `path`.
+    ConfirmDelete { path: String, id: String },
+    /// Capturing import input: a pasted WireGuard config or a `.conf` path.
+    Import(String),
+}
+
+/// Interactive modal state: the profile list, a selection cursor, and an
+/// optional active prompt (delete confirmation or import input).
 pub struct VpnModal {
     pub entries: Vec<VpnEntry>,
     pub selected: usize,
-    /// When set, a delete confirmation is pending for the selected entry; the
-    /// hint line shows the prompt and only y/n are honored until resolved.
-    pub pending_delete: bool,
-    /// When set, the modal is capturing import input — either a pasted WireGuard
-    /// config or a path to a `.conf` file; the hint line becomes the input field
-    /// until Enter/Esc.
-    pub import_input: Option<String>,
+    pub prompt: Option<VpnPrompt>,
 }
 
 impl VpnModal {
@@ -84,9 +89,24 @@ impl VpnModal {
         Ok(Self {
             entries: list_entries(nm).await?,
             selected: 0,
-            pending_delete: false,
-            import_input: None,
+            prompt: None,
         })
+    }
+
+    /// The import buffer, when the import prompt is active.
+    pub fn import_buffer(&self) -> Option<&str> {
+        match &self.prompt {
+            Some(VpnPrompt::Import(buf)) => Some(buf),
+            _ => None,
+        }
+    }
+
+    /// The profile pending deletion, when the confirm prompt is active.
+    pub fn pending_delete(&self) -> Option<&str> {
+        match &self.prompt {
+            Some(VpnPrompt::ConfirmDelete { id, .. }) => Some(id),
+            _ => None,
+        }
     }
 
     pub fn is_empty(&self) -> bool {
@@ -127,14 +147,59 @@ impl VpnModal {
         Ok(Some((id, next)))
     }
 
-    /// Deletes the selected profile, clearing the pending-confirm flag. Returns
-    /// the removed profile's name. No-op on an empty list.
-    pub async fn delete_selected(&mut self, nm: &NMClient) -> Result<Option<String>> {
-        self.pending_delete = false;
-        let Some(entry) = self.selected_entry() else {
+    /// Arms a delete confirmation for the selected profile, capturing its path
+    /// so the eventual delete targets that profile even if the list reorders.
+    /// No-op on an empty list.
+    pub fn begin_delete(&mut self) {
+        if let Some(entry) = self.selected_entry() {
+            self.prompt = Some(VpnPrompt::ConfirmDelete {
+                path: entry.info.path.clone(),
+                id: entry.info.id.clone(),
+            });
+        }
+    }
+
+    /// Opens the import prompt with an empty buffer.
+    pub fn begin_import(&mut self) {
+        self.prompt = Some(VpnPrompt::Import(String::new()));
+    }
+
+    /// Dismisses any active prompt.
+    pub fn cancel_prompt(&mut self) {
+        self.prompt = None;
+    }
+
+    /// Appends text to the import buffer (used for pasted input and typed keys).
+    pub fn import_append(&mut self, text: &str) {
+        if let Some(VpnPrompt::Import(buf)) = &mut self.prompt {
+            buf.push_str(text);
+        }
+    }
+
+    /// Removes the last character from the import buffer.
+    pub fn import_backspace(&mut self) {
+        if let Some(VpnPrompt::Import(buf)) = &mut self.prompt {
+            buf.pop();
+        }
+    }
+
+    /// Closes the import prompt and returns the captured buffer, if any.
+    pub fn take_import(&mut self) -> Option<String> {
+        match self.prompt.take() {
+            Some(VpnPrompt::Import(buf)) => Some(buf),
+            other => {
+                self.prompt = other;
+                None
+            }
+        }
+    }
+
+    /// Deletes the profile captured by the active confirm prompt. Returns the
+    /// removed profile's name. No-op when no delete is pending.
+    pub async fn delete_confirmed(&mut self, nm: &NMClient) -> Result<Option<String>> {
+        let Some(VpnPrompt::ConfirmDelete { path, id }) = self.prompt.take() else {
             return Ok(None);
         };
-        let (path, id) = (entry.info.path.clone(), entry.info.id.clone());
         nm.delete_connection(&path).await?;
         self.refresh(nm).await?;
         Ok(Some(id))
@@ -180,31 +245,53 @@ pub async fn import_from_text(nm: &NMClient, text: &str) -> Result<String> {
     create_profile(nm, &base, &cfg).await
 }
 
-/// Creates the profile under a name that doesn't collide with an existing one.
+/// Creates the profile under a display name and interface name that don't
+/// collide with existing saved profiles. A single fetch backs both dedup checks.
 async fn create_profile(nm: &NMClient, base_name: &str, cfg: &WgConfig) -> Result<String> {
-    let id = dedupe_name(nm, base_name).await?;
-    let interface = sanitize_ifname(&id);
+    let existing = nm.get_vpn_connections().await?;
+    let ids: HashSet<&str> = existing.iter().map(|v| v.id.as_str()).collect();
+    let ifaces: HashSet<&str> = existing
+        .iter()
+        .map(|v| v.interface_name.as_str())
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    let id = dedupe(&ids, base_name);
+    let interface = unique_interface(&ifaces, &sanitize_ifname(base_name));
     nm.add_wireguard_connection(&id, &interface, cfg).await?;
     Ok(id)
 }
 
-/// Returns `base` if no saved VPN profile already uses it, otherwise appends a
-/// numeric suffix (`base-2`, `base-3`, …) until the name is free.
-async fn dedupe_name(nm: &NMClient, base: &str) -> Result<String> {
-    let existing: std::collections::HashSet<String> = nm
-        .get_vpn_connections()
-        .await?
-        .into_iter()
-        .map(|v| v.id)
-        .collect();
-    if !existing.contains(base) {
-        return Ok(base.to_string());
+/// Returns `base` if free in `taken`, otherwise appends `-2`, `-3`, … until the
+/// name is unique.
+fn dedupe(taken: &HashSet<&str>, base: &str) -> String {
+    if !taken.contains(base) {
+        return base.to_string();
     }
     let mut n = 2;
     loop {
         let candidate = format!("{base}-{n}");
-        if !existing.contains(&candidate) {
-            return Ok(candidate);
+        if !taken.contains(candidate.as_str()) {
+            return candidate;
+        }
+        n += 1;
+    }
+}
+
+/// Like [`dedupe`] but keeps the result a valid interface name (≤15 chars) by
+/// truncating the base to make room for the numeric suffix.
+fn unique_interface(taken: &HashSet<&str>, base: &str) -> String {
+    if !taken.contains(base) {
+        return base.to_string();
+    }
+    let mut n = 2;
+    loop {
+        let suffix = format!("-{n}");
+        let keep = 15usize.saturating_sub(suffix.len());
+        let head: String = base.chars().take(keep).collect();
+        let candidate = format!("{}{suffix}", head.trim_end_matches('-'));
+        if !taken.contains(candidate.as_str()) {
+            return candidate;
         }
         n += 1;
     }
@@ -320,6 +407,7 @@ mod tests {
                 id: id.to_string(),
                 uuid: id.to_string(),
                 kind: VpnKind::Vpn,
+                interface_name: String::new(),
                 autoconnect: false,
                 timestamp: 0,
             },
@@ -333,9 +421,52 @@ mod tests {
         VpnModal {
             entries: states.iter().map(|s| entry("vpn", *s)).collect(),
             selected: 0,
-            pending_delete: false,
-            import_input: None,
+            prompt: None,
         }
+    }
+
+    fn set(items: &[&'static str]) -> HashSet<&'static str> {
+        items.iter().copied().collect()
+    }
+
+    #[test]
+    fn dedupe_appends_suffix_until_free() {
+        assert_eq!(dedupe(&set(&[]), "wg-home"), "wg-home");
+        assert_eq!(dedupe(&set(&["wg-home"]), "wg-home"), "wg-home-2");
+        assert_eq!(
+            dedupe(&set(&["wg-home", "wg-home-2"]), "wg-home"),
+            "wg-home-3"
+        );
+    }
+
+    #[test]
+    fn unique_interface_stays_within_15_chars() {
+        // Free name is returned as-is.
+        assert_eq!(unique_interface(&set(&[]), "proton-nl"), "proton-nl");
+        // Collisions get a suffix while staying a valid (<=15) interface name.
+        let taken = set(&["wg-185-185-50-2"]);
+        let out = unique_interface(&taken, "wg-185-185-50-2");
+        assert_ne!(out, "wg-185-185-50-2");
+        assert!(out.len() <= 15, "got {out:?}");
+    }
+
+    #[test]
+    fn prompt_helpers_model_one_mode_at_a_time() {
+        let mut m = modal(&[ActiveConnectionState::Deactivated]);
+        assert!(m.import_buffer().is_none() && m.pending_delete().is_none());
+
+        m.begin_import();
+        m.import_append("~/wg.conf");
+        assert_eq!(m.import_buffer(), Some("~/wg.conf"));
+        assert!(m.pending_delete().is_none());
+
+        // Opening the delete confirm replaces the import prompt (no dual state).
+        m.begin_delete();
+        assert!(m.import_buffer().is_none());
+        assert_eq!(m.pending_delete(), Some("vpn"));
+
+        m.cancel_prompt();
+        assert!(m.pending_delete().is_none());
     }
 
     #[test]

@@ -114,8 +114,8 @@ pub fn render(app: &mut App, frame: &mut Frame) {
 }
 
 /// Draws a small always-on badge in the top-right when one or more VPN tunnels
-/// are active, so the status is visible without opening the modal. ASCII keeps
-/// the rendered width exact for tight placement over the top border.
+/// are active, so the status is visible without opening the modal. The rect is
+/// sized to the label's display width (profile names may contain wide chars).
 fn render_vpn_badge(frame: &mut Frame, active_vpns: &[String]) {
     let Some(first) = active_vpns.first() else {
         return;
@@ -129,7 +129,8 @@ fn render_vpn_badge(frame: &mut Frame, active_vpns: &[String]) {
     };
 
     let full = frame.area();
-    let width = (label.chars().count() as u16).min(full.width);
+    let line = Line::from(label);
+    let width = (line.width() as u16).min(full.width);
     if width == 0 {
         return;
     }
@@ -141,8 +142,8 @@ fn render_vpn_badge(frame: &mut Frame, active_vpns: &[String]) {
         height: 1,
     };
 
-    let badge = Paragraph::new(Line::from(label))
-        .style(Style::default().fg(Color::Green).bg(Color::Black).bold());
+    let badge =
+        Paragraph::new(line).style(Style::default().fg(Color::Green).bg(Color::Black).bold());
 
     frame.render_widget(Clear, area);
     frame.render_widget(badge, area);
