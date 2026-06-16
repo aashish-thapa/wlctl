@@ -33,10 +33,15 @@ cargo install wlctl
 # Arch (AUR)
 yay -S wlctl-bin
 
+# Nix (run without installing)
+nix run github:aashish-thapa/wlctl
+
 # from source
 git clone https://github.com/aashish-thapa/wlctl && cd wlctl
 cargo build --release
 ```
+
+On NixOS, add the flake as an input and use `wlctl.packages.${system}.default`, or drop it into a shell with `nix shell github:aashish-thapa/wlctl`.
 
 Needs NetworkManager running. [Nerd Fonts](https://www.nerdfonts.com/) optional, for icons.
 
