@@ -680,7 +680,9 @@ impl AccessPoint {
         // Advertise the global VPN shortcut from the AP list views.
         if matches!(
             focused_block,
-            FocusedBlock::Device | FocusedBlock::AccessPoint
+            FocusedBlock::Device
+                | FocusedBlock::AccessPoint
+                | FocusedBlock::AccessPointConnectedDevices
         ) {
             help_message
                 .spans
