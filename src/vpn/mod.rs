@@ -20,6 +20,8 @@ pub struct VpnEntry {
     /// Active-connection object path when the tunnel is up; used to deactivate.
     pub active_path: Option<String>,
     pub state: ActiveConnectionState,
+    /// Assigned IPv4 (`addr/prefix`) while the tunnel is up; `None` otherwise.
+    pub ipv4: Option<String>,
 }
 
 impl VpnEntry {
@@ -31,12 +33,44 @@ impl VpnEntry {
             ActiveConnectionState::Activated | ActiveConnectionState::Activating
         )
     }
+
+    /// Human-readable uptime ("up 14m", "up 2h 3m") derived from the profile's
+    /// last-activation timestamp. `None` when down or the timestamp is missing
+    /// or in the future (clock skew / never activated).
+    pub fn uptime(&self) -> Option<String> {
+        if !self.is_active() || self.info.timestamp == 0 {
+            return None;
+        }
+        let now = chrono::Local::now().timestamp();
+        let elapsed = now.checked_sub(self.info.timestamp as i64)?;
+        if elapsed < 0 {
+            return None;
+        }
+        Some(format!("up {}", format_duration(elapsed as u64)))
+    }
+}
+
+/// Formats a span of seconds compactly: "45s", "14m", "2h 3m", "1d 4h".
+fn format_duration(secs: u64) -> String {
+    let (d, h, m, s) = (secs / 86_400, secs / 3_600 % 24, secs / 60 % 60, secs % 60);
+    if d > 0 {
+        format!("{d}d {h}h")
+    } else if h > 0 {
+        format!("{h}h {m}m")
+    } else if m > 0 {
+        format!("{m}m")
+    } else {
+        format!("{s}s")
+    }
 }
 
 /// Interactive modal state: the profile list plus a selection cursor.
 pub struct VpnModal {
     pub entries: Vec<VpnEntry>,
     pub selected: usize,
+    /// When set, a delete confirmation is pending for the selected entry; the
+    /// hint line shows the prompt and only y/n are honored until resolved.
+    pub pending_delete: bool,
 }
 
 impl VpnModal {
@@ -45,6 +79,7 @@ impl VpnModal {
         Ok(Self {
             entries: list_entries(nm).await?,
             selected: 0,
+            pending_delete: false,
         })
     }
 
@@ -71,6 +106,32 @@ impl VpnModal {
         self.entries = list_entries(nm).await?;
         self.selected = self.selected.min(self.entries.len().saturating_sub(1));
         Ok(())
+    }
+
+    /// Flips autoconnect on the selected profile and re-reads state so the UI
+    /// reflects the change. No-op on an empty list.
+    pub async fn toggle_autoconnect(&mut self, nm: &NMClient) -> Result<Option<(String, bool)>> {
+        let Some(entry) = self.selected_entry() else {
+            return Ok(None);
+        };
+        let next = !entry.info.autoconnect;
+        let (path, id) = (entry.info.path.clone(), entry.info.id.clone());
+        nm.set_connection_autoconnect(&path, next).await?;
+        self.refresh(nm).await?;
+        Ok(Some((id, next)))
+    }
+
+    /// Deletes the selected profile, clearing the pending-confirm flag. Returns
+    /// the removed profile's name. No-op on an empty list.
+    pub async fn delete_selected(&mut self, nm: &NMClient) -> Result<Option<String>> {
+        self.pending_delete = false;
+        let Some(entry) = self.selected_entry() else {
+            return Ok(None);
+        };
+        let (path, id) = (entry.info.path.clone(), entry.info.id.clone());
+        nm.delete_connection(&path).await?;
+        self.refresh(nm).await?;
+        Ok(Some(id))
     }
 }
 
@@ -100,21 +161,29 @@ async fn list_entries(nm: &NMClient) -> Result<Vec<VpnEntry>> {
         }
     }
 
-    Ok(profiles
-        .into_iter()
-        .map(|info| match active_by_profile.get(&info.path) {
-            Some((active_path, state)) => VpnEntry {
-                info,
-                active_path: Some(active_path.clone()),
-                state: *state,
-            },
-            None => VpnEntry {
+    let mut entries = Vec::with_capacity(profiles.len());
+    for info in profiles {
+        match active_by_profile.get(&info.path) {
+            Some((active_path, state)) => {
+                // Best-effort: a missing lease shouldn't drop the whole entry.
+                let ipv4 = nm.active_connection_ipv4(active_path).await.ok().flatten();
+                entries.push(VpnEntry {
+                    info,
+                    active_path: Some(active_path.clone()),
+                    state: *state,
+                    ipv4,
+                });
+            }
+            None => entries.push(VpnEntry {
                 info,
                 active_path: None,
                 state: ActiveConnectionState::Deactivated,
-            },
-        })
-        .collect())
+                ipv4: None,
+            }),
+        }
+    }
+
+    Ok(entries)
 }
 
 #[cfg(test)]
@@ -133,9 +202,12 @@ mod tests {
                 id: id.to_string(),
                 uuid: id.to_string(),
                 kind: VpnKind::Vpn,
+                autoconnect: false,
+                timestamp: 0,
             },
             active_path,
             state,
+            ipv4: None,
         }
     }
 
@@ -143,6 +215,7 @@ mod tests {
         VpnModal {
             entries: states.iter().map(|s| entry("vpn", *s)).collect(),
             selected: 0,
+            pending_delete: false,
         }
     }
 
@@ -164,6 +237,29 @@ mod tests {
         assert_eq!(m.selected, 2, "wraps below zero to the last entry");
         m.move_selection(1);
         assert_eq!(m.selected, 0, "wraps past the end to the first entry");
+    }
+
+    #[test]
+    fn format_duration_picks_coarsest_units() {
+        assert_eq!(format_duration(45), "45s");
+        assert_eq!(format_duration(14 * 60), "14m");
+        assert_eq!(format_duration(2 * 3600 + 3 * 60), "2h 3m");
+        assert_eq!(format_duration(86_400 + 4 * 3600), "1d 4h");
+    }
+
+    #[test]
+    fn uptime_is_none_when_down_or_untimed() {
+        assert!(
+            entry("a", ActiveConnectionState::Deactivated)
+                .uptime()
+                .is_none()
+        );
+        // Active but no timestamp recorded.
+        assert!(
+            entry("a", ActiveConnectionState::Activated)
+                .uptime()
+                .is_none()
+        );
     }
 
     #[test]

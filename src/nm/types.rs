@@ -313,6 +313,10 @@ pub struct VpnConnectionInfo {
     pub id: String,
     pub uuid: String,
     pub kind: VpnKind,
+    /// Whether NetworkManager brings this profile up automatically.
+    pub autoconnect: bool,
+    /// Epoch seconds of the profile's last successful activation (`0` if never).
+    pub timestamp: u64,
 }
 
 /// Active connection state

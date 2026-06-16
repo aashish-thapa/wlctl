@@ -21,7 +21,11 @@ pub fn render_modal(frame: &mut Frame, modal: &VpnModal) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .margin(1)
-        .constraints([Constraint::Fill(1), Constraint::Length(1)])
+        .constraints([
+            Constraint::Fill(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+        ])
         .split(vpn_block().inner(area));
 
     if modal.is_empty() {
@@ -30,7 +34,31 @@ pub fn render_modal(frame: &mut Frame, modal: &VpnModal) {
         render_list(frame, chunks[0], modal);
     }
 
-    frame.render_widget(hint(modal.is_empty()), chunks[1]);
+    frame.render_widget(detail(modal), chunks[1]);
+    frame.render_widget(hint(modal), chunks[2]);
+}
+
+/// One-line detail for the selected entry: its assigned IPv4 and uptime while
+/// up. Blank when nothing is selected or the tunnel is down.
+fn detail(modal: &VpnModal) -> Paragraph<'static> {
+    let text = modal
+        .selected_entry()
+        .filter(|e| e.is_active())
+        .map(|e| {
+            let mut parts = Vec::new();
+            if let Some(ip) = &e.ipv4 {
+                parts.push(ip.clone());
+            }
+            if let Some(up) = e.uptime() {
+                parts.push(up);
+            }
+            parts.join("  ·  ")
+        })
+        .unwrap_or_default();
+
+    Paragraph::new(text)
+        .alignment(Alignment::Center)
+        .style(Style::default().fg(Color::DarkGray))
 }
 
 fn popup_area(full: Rect) -> Rect {
@@ -85,22 +113,40 @@ fn render_list(frame: &mut Frame, area: Rect, modal: &VpnModal) {
         .entries
         .iter()
         .map(|entry| {
+            let (auto_label, auto_color) = if entry.info.autoconnect {
+                ("✓", Color::Green)
+            } else {
+                ("·", Color::DarkGray)
+            };
             Row::new(vec![
                 Cell::from(state_label(entry.state))
                     .style(Style::default().fg(state_color(entry.state)).bold()),
                 Cell::from(Span::from(entry.info.id.clone()).bold()),
                 Cell::from(entry.info.kind.to_string()).style(Style::default().fg(Color::DarkGray)),
+                Cell::from(Line::from(auto_label).centered())
+                    .style(Style::default().fg(auto_color)),
             ])
         })
         .collect();
 
     let widths = [
-        Constraint::Length(8),
+        Constraint::Length(7),
         Constraint::Fill(1),
         Constraint::Length(10),
+        Constraint::Length(4),
     ];
 
+    let header = Row::new(vec![
+        Cell::from("STATE"),
+        Cell::from("NAME"),
+        Cell::from("TYPE"),
+        Cell::from(Line::from("AUTO").centered()),
+    ])
+    .style(Style::default().fg(Color::DarkGray))
+    .bottom_margin(1);
+
     let table = Table::new(rows, widths)
+        .header(header)
         .column_spacing(2)
         .row_highlight_style(Style::default().bg(Color::DarkGray).fg(Color::White));
 
@@ -108,8 +154,26 @@ fn render_list(frame: &mut Frame, area: Rect, modal: &VpnModal) {
     frame.render_stateful_widget(table, area, &mut state);
 }
 
-fn hint(is_empty: bool) -> Paragraph<'static> {
-    let spans = if is_empty {
+fn hint(modal: &VpnModal) -> Paragraph<'static> {
+    // A pending delete swaps the hint line for a confirmation prompt.
+    if modal.pending_delete {
+        let name = modal
+            .selected_entry()
+            .map(|e| e.info.id.clone())
+            .unwrap_or_default();
+        let line = Line::from(vec![
+            Span::from(format!("Delete '{name}'?  ")),
+            Span::from("y").bold(),
+            Span::from(" Yes  "),
+            Span::from("n").bold(),
+            Span::from(" No"),
+        ]);
+        return Paragraph::new(line)
+            .alignment(Alignment::Center)
+            .style(Style::default().fg(Color::Red));
+    }
+
+    let spans = if modal.is_empty() {
         vec![Span::from("Esc").bold(), Span::from(" Close")]
     } else {
         vec![
@@ -118,6 +182,12 @@ fn hint(is_empty: bool) -> Paragraph<'static> {
             Span::from(" | "),
             Span::from("⏎").bold(),
             Span::from(" Toggle"),
+            Span::from(" | "),
+            Span::from("a").bold(),
+            Span::from(" Auto"),
+            Span::from(" | "),
+            Span::from("d").bold(),
+            Span::from(" Delete"),
             Span::from(" | "),
             Span::from("Esc").bold(),
             Span::from(" Close"),
