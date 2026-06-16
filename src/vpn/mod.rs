@@ -4,12 +4,13 @@
 //! this module owns the modal state and NM orchestration.
 
 mod render;
+mod wg;
 
 pub use render::render_modal;
 
 use std::collections::HashMap;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 use crate::nm::{ActiveConnectionState, NMClient, VpnConnectionInfo};
 
@@ -71,6 +72,9 @@ pub struct VpnModal {
     /// When set, a delete confirmation is pending for the selected entry; the
     /// hint line shows the prompt and only y/n are honored until resolved.
     pub pending_delete: bool,
+    /// When set, the modal is capturing a file path to import a WireGuard
+    /// `.conf`; the hint line becomes an input field until Enter/Esc.
+    pub import_input: Option<String>,
 }
 
 impl VpnModal {
@@ -80,6 +84,7 @@ impl VpnModal {
             entries: list_entries(nm).await?,
             selected: 0,
             pending_delete: false,
+            import_input: None,
         })
     }
 
@@ -145,6 +150,53 @@ pub async fn toggle(nm: &NMClient, entry: &VpnEntry) -> Result<()> {
             nm.activate_connection(&entry.info.path, "/").await?;
             Ok(())
         }
+    }
+}
+
+/// Reads a WireGuard `.conf` from `path`, parses it, and creates a matching
+/// NetworkManager profile (without activating it). Returns the new profile's
+/// display name. `~` is expanded to the user's home directory.
+pub async fn import_from_file(nm: &NMClient, path: &str) -> Result<String> {
+    let expanded = expand_tilde(path);
+    let text = std::fs::read_to_string(&expanded).with_context(|| format!("reading {expanded}"))?;
+    let cfg = wg::parse(&text)?;
+
+    let stem = std::path::Path::new(&expanded)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("wireguard");
+
+    let interface = sanitize_ifname(stem);
+    nm.add_wireguard_connection(stem, &interface, &cfg).await?;
+    Ok(stem.to_string())
+}
+
+/// Expands a leading `~` to `$HOME`. Leaves the path untouched otherwise.
+fn expand_tilde(path: &str) -> String {
+    if let Some(rest) = path.strip_prefix("~/")
+        && let Ok(home) = std::env::var("HOME")
+    {
+        return format!("{home}/{rest}");
+    }
+    path.to_string()
+}
+
+/// Derives a valid Linux interface name from a profile name: lowercased, only
+/// `[a-z0-9-]`, capped at 15 chars. Falls back to `wg0` if nothing survives.
+fn sanitize_ifname(name: &str) -> String {
+    let cleaned: String = name
+        .to_ascii_lowercase()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect();
+    let trimmed = cleaned.trim_matches('-');
+    let capped: String = trimmed.chars().take(15).collect();
+    let capped = capped.trim_end_matches('-');
+    if capped.is_empty() {
+        "wg0".to_string()
+    } else {
+        capped.to_string()
     }
 }
 
@@ -216,7 +268,26 @@ mod tests {
             entries: states.iter().map(|s| entry("vpn", *s)).collect(),
             selected: 0,
             pending_delete: false,
+            import_input: None,
         }
+    }
+
+    #[test]
+    fn sanitize_ifname_keeps_it_valid() {
+        assert_eq!(
+            sanitize_ifname("proton-nl-NL-FREE-247"),
+            "proton-nl-NL-Fr".to_ascii_lowercase()
+        );
+        assert_eq!(sanitize_ifname("wg-proton"), "wg-proton");
+        assert_eq!(sanitize_ifname("US#FREE#55"), "us-free-55");
+        assert_eq!(sanitize_ifname("***"), "wg0");
+        assert!(sanitize_ifname("a-very-long-name-indeed").len() <= 15);
+    }
+
+    #[test]
+    fn expand_tilde_uses_home() {
+        // Non-tilde paths are returned verbatim.
+        assert_eq!(expand_tilde("/etc/wg.conf"), "/etc/wg.conf");
     }
 
     #[test]

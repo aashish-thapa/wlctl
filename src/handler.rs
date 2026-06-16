@@ -158,6 +158,50 @@ async fn handle_vpn_keys(
         return Ok(());
     };
 
+    // While importing, the modal is a path input field: capture all keys.
+    if modal.import_input.is_some() {
+        match key_event.code {
+            KeyCode::Esc => modal.import_input = None,
+            KeyCode::Backspace => {
+                if let Some(buf) = &mut modal.import_input {
+                    buf.pop();
+                }
+            }
+            KeyCode::Char(c) => {
+                if let Some(buf) = &mut modal.import_input {
+                    buf.push(c);
+                }
+            }
+            KeyCode::Enter => {
+                let path = modal
+                    .import_input
+                    .take()
+                    .unwrap_or_default()
+                    .trim()
+                    .to_string();
+                if !path.is_empty() {
+                    match crate::vpn::import_from_file(&app.client, &path).await {
+                        Ok(id) => {
+                            Notification::send(
+                                format!("Imported VPN {id}"),
+                                notification::NotificationLevel::Info,
+                                sender,
+                            )?;
+                            modal.refresh(&app.client).await?;
+                        }
+                        Err(e) => Notification::send(
+                            format!("Import failed: {e}"),
+                            notification::NotificationLevel::Error,
+                            sender,
+                        )?,
+                    }
+                }
+            }
+            _ => {}
+        }
+        return Ok(());
+    }
+
     // A pending delete confirmation captures all keys until resolved.
     if modal.pending_delete {
         match key_event.code {
@@ -238,6 +282,7 @@ async fn handle_vpn_keys(
                 modal.pending_delete = true;
             }
         }
+        KeyCode::Char('i') => modal.import_input = Some(String::new()),
         _ => {}
     }
 

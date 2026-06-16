@@ -1,6 +1,29 @@
 // NetworkManager types and enums
 
 use std::fmt;
+use std::net::IpAddr;
+
+/// A WireGuard peer parsed from a `.conf` `[Peer]` section.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WgPeerConfig {
+    pub public_key: String,
+    pub endpoint: Option<String>,
+    pub allowed_ips: Vec<String>,
+    pub preshared_key: Option<String>,
+    pub persistent_keepalive: Option<u32>,
+}
+
+/// A WireGuard tunnel parsed from a `.conf` file, ready to be turned into a
+/// NetworkManager `wireguard` connection. Holds a single peer (the common case
+/// for hosted providers like Proton/Mullvad).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WgConfig {
+    pub private_key: String,
+    /// Interface addresses as (ip, prefix); may mix IPv4 and IPv6.
+    pub addresses: Vec<(IpAddr, u8)>,
+    pub dns: Vec<IpAddr>,
+    pub peer: WgPeerConfig,
+}
 
 /// Active IPv4 configuration pulled from an NM device's `Ip4Config` object.
 #[derive(Debug, Clone, Default)]

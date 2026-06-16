@@ -39,8 +39,15 @@ pub fn render_modal(frame: &mut Frame, modal: &VpnModal) {
 }
 
 /// One-line detail for the selected entry: its assigned IPv4 and uptime while
-/// up. Blank when nothing is selected or the tunnel is down.
+/// up. Doubles as the prompt label while importing. Blank when nothing is
+/// selected or the tunnel is down.
 fn detail(modal: &VpnModal) -> Paragraph<'static> {
+    if modal.import_input.is_some() {
+        return Paragraph::new("Path to a WireGuard .conf  —  Enter to import, Esc to cancel")
+            .alignment(Alignment::Center)
+            .style(Style::default().fg(Color::DarkGray));
+    }
+
     let text = modal
         .selected_entry()
         .filter(|e| e.is_active())
@@ -155,6 +162,17 @@ fn render_list(frame: &mut Frame, area: Rect, modal: &VpnModal) {
 }
 
 fn hint(modal: &VpnModal) -> Paragraph<'static> {
+    // While importing, the hint line is the path input field.
+    if let Some(buf) = &modal.import_input {
+        let line = Line::from(vec![
+            Span::from("Path: ").bold(),
+            Span::from(format!("{buf}_")),
+        ]);
+        return Paragraph::new(line)
+            .alignment(Alignment::Left)
+            .style(Style::default().fg(Color::White));
+    }
+
     // A pending delete swaps the hint line for a confirmation prompt.
     if modal.pending_delete {
         let name = modal
@@ -174,7 +192,13 @@ fn hint(modal: &VpnModal) -> Paragraph<'static> {
     }
 
     let spans = if modal.is_empty() {
-        vec![Span::from("Esc").bold(), Span::from(" Close")]
+        vec![
+            Span::from("i").bold(),
+            Span::from(" Import"),
+            Span::from(" | "),
+            Span::from("Esc").bold(),
+            Span::from(" Close"),
+        ]
     } else {
         vec![
             Span::from("↑↓").bold(),
@@ -188,6 +212,9 @@ fn hint(modal: &VpnModal) -> Paragraph<'static> {
             Span::from(" | "),
             Span::from("d").bold(),
             Span::from(" Delete"),
+            Span::from(" | "),
+            Span::from("i").bold(),
+            Span::from(" Import"),
             Span::from(" | "),
             Span::from("Esc").bold(),
             Span::from(" Close"),
