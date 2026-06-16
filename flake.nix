@@ -11,8 +11,8 @@
             "aarch64-linux"
           ]
           (system: rec {
-            impala = nixpkgs.legacyPackages.${system}.callPackage ./package.nix { };
-            default = impala;
+            wlctl = nixpkgs.legacyPackages.${system}.callPackage ./package.nix { };
+            default = wlctl;
           });
     };
 }

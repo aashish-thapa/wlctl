@@ -15,8 +15,9 @@ rustPlatform.buildRustPackage {
 
   meta = {
     description = cargo.description;
-    homepage = cargo.homepage;
+    homepage = cargo.repository;
     license = lib.licenses.gpl3Only;
-    maintainers = with lib.maintainers; [ samuel-martineau ];
+    mainProgram = "wlctl";
+    platforms = lib.platforms.linux;
   };
 }
