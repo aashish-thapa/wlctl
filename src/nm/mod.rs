@@ -511,7 +511,7 @@ impl NMClient {
             });
         }
 
-        vpns.sort_by(|a, b| a.id.to_lowercase().cmp(&b.id.to_lowercase()));
+        vpns.sort_by_key(|v| v.id.to_lowercase());
         Ok(vpns)
     }
 
