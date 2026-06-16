@@ -3,6 +3,7 @@
 
 use anyhow::{Context, Result};
 use std::collections::HashMap;
+use std::net::IpAddr;
 use zbus::zvariant::{ObjectPath, OwnedObjectPath, OwnedValue, Value};
 use zbus::{Connection, Proxy};
 
@@ -598,6 +599,109 @@ impl NMClient {
         });
 
         Ok(first)
+    }
+
+    /// Creates a NetworkManager `wireguard` profile from a parsed `.conf`,
+    /// without activating it. Secrets (private/preshared keys) are stored
+    /// system-owned (flags `0`) so the tunnel can come up headlessly. Returns
+    /// the new connection's object path.
+    pub async fn add_wireguard_connection(
+        &self,
+        id: &str,
+        interface: &str,
+        cfg: &WgConfig,
+    ) -> Result<OwnedObjectPath> {
+        let proxy = Proxy::new(
+            &self.connection,
+            NM_BUS_NAME,
+            "/org/freedesktop/NetworkManager/Settings",
+            "org.freedesktop.NetworkManager.Settings",
+        )
+        .await?;
+
+        let mut settings: HashMap<&str, HashMap<&str, Value>> = HashMap::new();
+
+        // connection
+        let mut conn: HashMap<&str, Value> = HashMap::new();
+        conn.insert("type", Value::from("wireguard"));
+        conn.insert("id", Value::from(id.to_string()));
+        conn.insert("interface-name", Value::from(interface.to_string()));
+        // Don't surprise-connect on import; the user toggles it in the modal.
+        conn.insert("autoconnect", Value::from(false));
+        settings.insert("connection", conn);
+
+        // wireguard (single peer)
+        let mut peer: HashMap<&str, Value> = HashMap::new();
+        peer.insert("public-key", Value::from(cfg.peer.public_key.clone()));
+        if let Some(endpoint) = &cfg.peer.endpoint {
+            peer.insert("endpoint", Value::from(endpoint.clone()));
+        }
+        peer.insert("allowed-ips", Value::from(cfg.peer.allowed_ips.clone()));
+        if let Some(psk) = &cfg.peer.preshared_key {
+            peer.insert("preshared-key", Value::from(psk.clone()));
+            peer.insert("preshared-key-flags", Value::from(0u32));
+        }
+        if let Some(keepalive) = cfg.peer.persistent_keepalive {
+            peer.insert("persistent-keepalive", Value::from(keepalive));
+        }
+
+        let mut wireguard: HashMap<&str, Value> = HashMap::new();
+        wireguard.insert("private-key", Value::from(cfg.private_key.clone()));
+        wireguard.insert("private-key-flags", Value::from(0u32));
+        wireguard.insert("peers", Value::from(vec![peer]));
+        settings.insert("wireguard", wireguard);
+
+        // Split interface addresses by family for the ipv4/ipv6 sections.
+        let mut v4: Vec<HashMap<&str, Value>> = Vec::new();
+        let mut v6: Vec<HashMap<&str, Value>> = Vec::new();
+        for (ip, prefix) in &cfg.addresses {
+            let mut entry: HashMap<&str, Value> = HashMap::new();
+            entry.insert("address", Value::from(ip.to_string()));
+            entry.insert("prefix", Value::from(u32::from(*prefix)));
+            if ip.is_ipv4() {
+                v4.push(entry);
+            } else {
+                v6.push(entry);
+            }
+        }
+
+        // ipv4
+        let mut ipv4: HashMap<&str, Value> = HashMap::new();
+        if v4.is_empty() {
+            ipv4.insert("method", Value::from("disabled"));
+        } else {
+            ipv4.insert("method", Value::from("manual"));
+            ipv4.insert("address-data", Value::from(v4));
+            // NM's ipv4.dns is `au`: each address as the 4 octets read as a
+            // native-endian u32 (i.e. network byte order on the wire).
+            let dns4: Vec<u32> = cfg
+                .dns
+                .iter()
+                .filter_map(|ip| match ip {
+                    IpAddr::V4(v) => Some(u32::from_le_bytes(v.octets())),
+                    IpAddr::V6(_) => None,
+                })
+                .collect();
+            if !dns4.is_empty() {
+                ipv4.insert("dns", Value::from(dns4));
+            }
+        }
+        settings.insert("ipv4", ipv4);
+
+        // ipv6
+        let mut ipv6: HashMap<&str, Value> = HashMap::new();
+        if v6.is_empty() {
+            // Match nmcli: a v4-only tunnel disables IPv6 rather than attempting
+            // SLAAC on the interface.
+            ipv6.insert("method", Value::from("disabled"));
+        } else {
+            ipv6.insert("method", Value::from("manual"));
+            ipv6.insert("address-data", Value::from(v6));
+        }
+        settings.insert("ipv6", ipv6);
+
+        let path: OwnedObjectPath = proxy.call("AddConnection", &(settings,)).await?;
+        Ok(path)
     }
 
     /// Connect to a network using an existing connection profile

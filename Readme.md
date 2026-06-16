@@ -81,9 +81,12 @@ Needs NetworkManager running. [Nerd Fonts](https://www.nerdfonts.com/) optional,
 | Toggle on / off | `Space` or `Enter` |
 | Toggle autoconnect | `a` |
 | Delete profile (confirm `y`/`n`) | `d` |
+| Import a WireGuard `.conf` | `i` |
 | Close | `Esc` |
 
 The selected tunnel's assigned IP and uptime show below the list while it's up.
+
+**Importing WireGuard configs**: press `i`, type (or paste) the path to a WireGuard `.conf` file (e.g. one from Proton, Mullvad), and press Enter. wlctl parses it and creates a NetworkManager profile — no `nmcli` needed. `~` is expanded. The profile is added without auto-connecting; toggle it on with Enter. OpenVPN `.ovpn` files aren't supported here — import those with `nmcli connection import type openvpn file <path>` (requires the `NetworkManager-openvpn` plugin).
 
 ### Device panel
 
