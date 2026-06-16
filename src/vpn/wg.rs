@@ -24,6 +24,7 @@ pub fn parse(text: &str) -> Result<WgConfig> {
     let mut allowed_ips: Vec<String> = Vec::new();
     let mut preshared_key: Option<String> = None;
     let mut keepalive: Option<u32> = None;
+    let mut interface_count = 0;
     let mut peer_count = 0;
 
     for raw in text.lines() {
@@ -35,11 +36,20 @@ pub fn parse(text: &str) -> Result<WgConfig> {
 
         if let Some(name) = line.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
             let name = name.trim().to_ascii_lowercase();
-            if name == "peer" {
-                peer_count += 1;
-                if peer_count > 1 {
-                    bail!("multiple [Peer] sections are not supported");
+            match name.as_str() {
+                "interface" => {
+                    interface_count += 1;
+                    if interface_count > 1 {
+                        bail!("multiple [Interface] sections are not supported");
+                    }
                 }
+                "peer" => {
+                    peer_count += 1;
+                    if peer_count > 1 {
+                        bail!("multiple [Peer] sections are not supported");
+                    }
+                }
+                _ => {}
             }
             section = Some(name);
             continue;
@@ -72,11 +82,23 @@ pub fn parse(text: &str) -> Result<WgConfig> {
             (Some("peer"), "publickey") => public_key = Some(value),
             (Some("peer"), "endpoint") => endpoint = Some(value),
             (Some("peer"), "allowedips") => {
-                allowed_ips.extend(value.split(',').map(|s| s.trim().to_string()));
+                for item in value.split(',') {
+                    let item = item.trim();
+                    if item.is_empty() {
+                        continue;
+                    }
+                    // Validate the CIDR; keep the original string for NM.
+                    parse_cidr(item)?;
+                    allowed_ips.push(item.to_string());
+                }
             }
             (Some("peer"), "presharedkey") => preshared_key = Some(value),
             (Some("peer"), "persistentkeepalive") => {
-                keepalive = value.parse().ok();
+                keepalive = Some(
+                    value
+                        .parse()
+                        .map_err(|_| anyhow!("invalid PersistentKeepalive '{value}'"))?,
+                );
             }
             _ => {}
         }
@@ -201,5 +223,35 @@ AllowedIPs = 0.0.0.0/0, ::/0
     fn rejects_multiple_peers() {
         let two = "[Interface]\nPrivateKey=k=\nAddress=10.0.0.2/32\n[Peer]\nPublicKey=p=\nEndpoint=h:1\nAllowedIPs=0.0.0.0/0\n[Peer]\nPublicKey=q=\nEndpoint=h:2\nAllowedIPs=0.0.0.0/0\n";
         assert!(parse(two).is_err());
+    }
+
+    #[test]
+    fn rejects_multiple_interfaces() {
+        let two = "[Interface]\nPrivateKey=k=\nAddress=10.0.0.2/32\n[Interface]\nPrivateKey=k2=\nAddress=10.0.0.3/32\n[Peer]\nPublicKey=p=\nEndpoint=h:1\nAllowedIPs=0.0.0.0/0\n";
+        assert!(parse(two).is_err());
+    }
+
+    #[test]
+    fn rejects_malformed_allowed_ips_but_skips_empty_entries() {
+        // Trailing comma leaves an empty entry, which is skipped (not an error).
+        let cfg = parse(
+            "[Interface]\nPrivateKey=k=\nAddress=10.0.0.2/32\n[Peer]\nPublicKey=p=\nEndpoint=h:1\nAllowedIPs=0.0.0.0/0, ::/0,\n",
+        )
+        .unwrap();
+        assert_eq!(cfg.peer.allowed_ips, vec!["0.0.0.0/0", "::/0"]);
+
+        // A non-CIDR entry is rejected.
+        assert!(parse(
+            "[Interface]\nPrivateKey=k=\nAddress=10.0.0.2/32\n[Peer]\nPublicKey=p=\nEndpoint=h:1\nAllowedIPs=not-an-ip\n"
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn rejects_non_numeric_keepalive() {
+        assert!(parse(
+            "[Interface]\nPrivateKey=k=\nAddress=10.0.0.2/32\n[Peer]\nPublicKey=p=\nEndpoint=h:1\nAllowedIPs=0.0.0.0/0\nPersistentKeepalive=soon\n"
+        )
+        .is_err());
     }
 }

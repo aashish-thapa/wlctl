@@ -224,7 +224,9 @@ pub async fn toggle(nm: &NMClient, entry: &VpnEntry) -> Result<()> {
 /// display name (derived from the file name). `~` is expanded to `$HOME`.
 pub async fn import_from_file(nm: &NMClient, path: &str) -> Result<String> {
     let expanded = expand_tilde(path);
-    let text = std::fs::read_to_string(&expanded).with_context(|| format!("reading {expanded}"))?;
+    let text = tokio::fs::read_to_string(&expanded)
+        .await
+        .with_context(|| format!("reading {expanded}"))?;
     let cfg = wg::parse(&text)?;
 
     let base = std::path::Path::new(&expanded)
