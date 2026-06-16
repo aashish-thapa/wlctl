@@ -161,6 +161,9 @@ pub struct App {
     /// Open VPN modal, if any. Refreshed each tick while open so on/off state
     /// stays live as tunnels come up and down.
     pub vpn: Option<VpnModal>,
+    /// Names of currently-active VPN/WireGuard tunnels, refreshed each tick.
+    /// Drives the always-on status badge regardless of whether the modal is open.
+    pub active_vpns: Vec<String>,
 }
 
 impl App {
@@ -225,6 +228,7 @@ Error: {}",
             doctor: None,
             doctor_run_id: 0,
             vpn: None,
+            active_vpns: Vec::new(),
         })
     }
 
@@ -373,6 +377,12 @@ Error: {}",
         // Keep the VPN modal's on/off state live while it's open.
         if let Some(modal) = &mut self.vpn {
             modal.refresh(&self.client).await?;
+        }
+
+        // Refresh the always-on VPN badge. Best-effort: a transient D-Bus error
+        // shouldn't take down the whole tick, so failures just leave it stale.
+        if let Ok(names) = self.client.get_active_vpn_names().await {
+            self.active_vpns = names;
         }
 
         Ok(())

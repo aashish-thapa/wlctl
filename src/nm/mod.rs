@@ -22,6 +22,20 @@ fn setting_str(section: &HashMap<String, OwnedValue>, key: &str) -> Option<Strin
     String::try_from(value).ok()
 }
 
+/// Reads a boolean field out of one NetworkManager settings section, returning
+/// `None` if the key is absent or not bool-convertible.
+fn setting_bool(section: &HashMap<String, OwnedValue>, key: &str) -> Option<bool> {
+    let value = section.get(key)?.try_clone().ok()?;
+    bool::try_from(value).ok()
+}
+
+/// Reads a `u64` field out of one NetworkManager settings section, returning
+/// `None` if the key is absent or not convertible.
+fn setting_u64(section: &HashMap<String, OwnedValue>, key: &str) -> Option<u64> {
+    let value = section.get(key)?.try_clone().ok()?;
+    u64::try_from(value).ok()
+}
+
 /// Main NetworkManager client
 #[derive(Clone, Debug)]
 pub struct NMClient {
@@ -508,11 +522,82 @@ impl NMClient {
                 id: setting_str(connection, "id").unwrap_or_default(),
                 uuid: setting_str(connection, "uuid").unwrap_or_default(),
                 kind,
+                // NetworkManager omits `autoconnect` when it's at its default of true.
+                autoconnect: setting_bool(connection, "autoconnect").unwrap_or(true),
+                timestamp: setting_u64(connection, "timestamp").unwrap_or(0),
             });
         }
 
         vpns.sort_by_key(|v| v.id.to_lowercase());
         Ok(vpns)
+    }
+
+    /// Names of the VPN / WireGuard profiles that are currently activated.
+    /// Drives the always-on VPN indicator without opening the modal.
+    pub async fn get_active_vpn_names(&self) -> Result<Vec<String>> {
+        let mut names = Vec::new();
+
+        for active_path in self.get_active_connections().await? {
+            let Ok(info) = self.get_active_connection_info(active_path.as_str()).await else {
+                continue;
+            };
+            if info.state != ActiveConnectionState::Activated {
+                continue;
+            }
+            let Ok(settings) = self.get_connection_settings(&info.connection_path).await else {
+                continue;
+            };
+            let is_vpn = settings
+                .get("connection")
+                .and_then(|c| setting_str(c, "type"))
+                .is_some_and(|t| t == "vpn" || t == "wireguard");
+            if is_vpn {
+                names.push(info.id);
+            }
+        }
+
+        names.sort_by_key(|n| n.to_lowercase());
+        Ok(names)
+    }
+
+    /// First IPv4 address (as `addr/prefix`) assigned to an active connection,
+    /// read from its `Ip4Config`. `None` when the tunnel carries no IPv4 lease.
+    pub async fn active_connection_ipv4(&self, active_conn_path: &str) -> Result<Option<String>> {
+        let proxy = Proxy::new(
+            &self.connection,
+            NM_BUS_NAME,
+            active_conn_path,
+            "org.freedesktop.NetworkManager.Connection.Active",
+        )
+        .await?;
+
+        let ip4_path: OwnedObjectPath = proxy.get_property("Ip4Config").await?;
+        if ip4_path.as_str() == "/" {
+            return Ok(None);
+        }
+
+        let ip4_proxy = Proxy::new(
+            &self.connection,
+            NM_BUS_NAME,
+            ip4_path.as_str(),
+            "org.freedesktop.NetworkManager.IP4Config",
+        )
+        .await?;
+
+        let address_data: Vec<HashMap<String, OwnedValue>> =
+            ip4_proxy.get_property("AddressData").await?;
+
+        let first = address_data.into_iter().find_map(|m| {
+            let addr: String = m.get("address")?.try_clone().ok()?.try_into().ok()?;
+            let prefix: u32 = m
+                .get("prefix")
+                .and_then(|v| v.try_clone().ok())
+                .and_then(|v| v.try_into().ok())
+                .unwrap_or(0);
+            Some(format!("{addr}/{prefix}"))
+        });
+
+        Ok(first)
     }
 
     /// Connect to a network using an existing connection profile

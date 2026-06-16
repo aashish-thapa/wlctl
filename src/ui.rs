@@ -1,7 +1,13 @@
 use std::sync::atomic::Ordering;
 
 use crate::nm::Mode;
-use ratatui::Frame;
+use ratatui::{
+    Frame,
+    layout::Rect,
+    style::{Color, Style, Stylize},
+    text::Line,
+    widgets::{Clear, Paragraph},
+};
 
 use crate::app::{AdapterView, App, FocusedBlock};
 
@@ -98,9 +104,46 @@ pub fn render(app: &mut App, frame: &mut Frame) {
             req.render(frame);
         }
 
+        render_vpn_badge(frame, &app.active_vpns);
+
         // Notifications
         for (index, notification) in app.notifications.iter().enumerate() {
             notification.render(index, frame);
         }
     }
+}
+
+/// Draws a small always-on badge in the top-right when one or more VPN tunnels
+/// are active, so the status is visible without opening the modal. ASCII keeps
+/// the rendered width exact for tight placement over the top border.
+fn render_vpn_badge(frame: &mut Frame, active_vpns: &[String]) {
+    let Some(first) = active_vpns.first() else {
+        return;
+    };
+
+    let extra = active_vpns.len().saturating_sub(1);
+    let label = if extra > 0 {
+        format!(" VPN: {first} +{extra} ")
+    } else {
+        format!(" VPN: {first} ")
+    };
+
+    let full = frame.area();
+    let width = (label.chars().count() as u16).min(full.width);
+    if width == 0 {
+        return;
+    }
+
+    let area = Rect {
+        x: full.width.saturating_sub(width),
+        y: 0,
+        width,
+        height: 1,
+    };
+
+    let badge = Paragraph::new(Line::from(label))
+        .style(Style::default().fg(Color::Green).bg(Color::Black).bold());
+
+    frame.render_widget(Clear, area);
+    frame.render_widget(badge, area);
 }

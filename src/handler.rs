@@ -158,6 +158,32 @@ async fn handle_vpn_keys(
         return Ok(());
     };
 
+    // A pending delete confirmation captures all keys until resolved.
+    if modal.pending_delete {
+        match key_event.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                match modal.delete_selected(&app.client).await {
+                    Ok(Some(id)) => Notification::send(
+                        format!("Deleted VPN {id}"),
+                        notification::NotificationLevel::Info,
+                        sender,
+                    )?,
+                    Ok(None) => {}
+                    Err(e) => Notification::send(
+                        format!("Delete failed: {e}"),
+                        notification::NotificationLevel::Error,
+                        sender,
+                    )?,
+                }
+            }
+            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                modal.pending_delete = false;
+            }
+            _ => {}
+        }
+        return Ok(());
+    }
+
     match key_event.code {
         KeyCode::Esc => {
             app.vpn = None;
@@ -192,6 +218,24 @@ async fn handle_vpn_keys(
                         sender,
                     )?;
                 }
+            }
+        }
+        KeyCode::Char('a') => match modal.toggle_autoconnect(&app.client).await {
+            Ok(Some((id, on))) => Notification::send(
+                format!("Autoconnect {} for {id}", if on { "on" } else { "off" }),
+                notification::NotificationLevel::Info,
+                sender,
+            )?,
+            Ok(None) => {}
+            Err(e) => Notification::send(
+                format!("Autoconnect change failed: {e}"),
+                notification::NotificationLevel::Error,
+                sender,
+            )?,
+        },
+        KeyCode::Char('d') => {
+            if modal.selected_entry().is_some() {
+                modal.pending_delete = true;
             }
         }
         _ => {}

@@ -19,7 +19,7 @@
 - Station and Access Point modes
 - WPA Enterprise (802.1X)
 - Multiple adapters — pick which one to drive, switch on the fly
-- VPN connections — toggle saved VPN / WireGuard profiles, like nmtui
+- VPN connections — toggle, manage autoconnect, and delete saved VPN / WireGuard profiles, like nmtui; an active tunnel shows as a badge in the top-right
 - `wlctl doctor` — walks rfkill, driver, association, IP, DHCP, gateway, DNS, internet
 - QR code sharing, hidden networks, speed test
 - Vim keys, every binding configurable
@@ -73,6 +73,17 @@ Needs NetworkManager running. [Nerd Fonts](https://www.nerdfonts.com/) optional,
 | Connect / disconnect | `Space` or `Enter` |
 | Connect to hidden | `h` |
 | Show all | `a` |
+
+### VPN connections (open with `v`)
+
+| Action | Key |
+|---|---|
+| Toggle on / off | `Space` or `Enter` |
+| Toggle autoconnect | `a` |
+| Delete profile (confirm `y`/`n`) | `d` |
+| Close | `Esc` |
+
+The selected tunnel's assigned IP and uptime show below the list while it's up.
 
 ### Device panel
 
