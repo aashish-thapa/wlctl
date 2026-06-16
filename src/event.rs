@@ -15,6 +15,7 @@ pub enum Event {
     Tick,
     Key(KeyEvent),
     Mouse(MouseEvent),
+    Paste(String),
     Resize(u16, u16),
     Notification(Notification),
     Reset(Mode),
@@ -67,6 +68,11 @@ impl EventHandler {
                       },
                       CrosstermEvent::Resize(x, y) => {
                         sender_cloned.send(Event::Resize(x, y)).unwrap();
+                      },
+                      // Only emitted while bracketed paste is enabled (scoped to
+                      // the VPN config import field).
+                      CrosstermEvent::Paste(text) => {
+                        sender_cloned.send(Event::Paste(text)).unwrap();
                       },
                       _ => {}
                     }

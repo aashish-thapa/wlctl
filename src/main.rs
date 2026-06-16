@@ -10,7 +10,7 @@ use wlctl::{
     config::Config,
     doctor,
     event::{Event, EventHandler},
-    handler::{handle_key_events, toggle_connect},
+    handler::{handle_key_events, handle_paste, toggle_connect},
     nm::Mode,
     notification::{Notification, NotificationLevel},
     rfkill,
@@ -84,6 +84,10 @@ async fn main() -> Result<()> {
                     config.clone(),
                 )
                 .await;
+            }
+
+            Event::Paste(text) => {
+                handle_paste(&mut app, text);
             }
 
             Event::Notification(notification) => {
