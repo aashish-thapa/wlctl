@@ -4,7 +4,7 @@ use ratatui::{
     style::{Color, Style, Stylize},
     text::{Line, Span},
     widgets::{
-        Block, BorderType, Borders, Cell, Clear, Padding, Paragraph, Row, Table, TableState,
+        Block, BorderType, Borders, Cell, Clear, Padding, Paragraph, Row, Table, TableState, Wrap,
     },
 };
 
@@ -18,6 +18,14 @@ pub fn render_modal(frame: &mut Frame, modal: &VpnModal) {
     frame.render_widget(Clear, area);
     frame.render_widget(vpn_block(), area);
 
+    let inner = vpn_block().inner(area);
+
+    // The import flow takes over the whole body with its own paste box.
+    if modal.import_input.is_some() {
+        render_import(frame, inner, modal);
+        return;
+    }
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .margin(1)
@@ -26,7 +34,7 @@ pub fn render_modal(frame: &mut Frame, modal: &VpnModal) {
             Constraint::Length(1),
             Constraint::Length(1),
         ])
-        .split(vpn_block().inner(area));
+        .split(inner);
 
     if modal.is_empty() {
         render_empty(frame, chunks[0]);
@@ -38,18 +46,72 @@ pub fn render_modal(frame: &mut Frame, modal: &VpnModal) {
     frame.render_widget(hint(modal), chunks[2]);
 }
 
-/// One-line detail for the selected entry: its assigned IPv4 and uptime while
-/// up. Doubles as the prompt label while importing. Blank when nothing is
-/// selected or the tunnel is down.
-fn detail(modal: &VpnModal) -> Paragraph<'static> {
-    if modal.import_input.is_some() {
-        return Paragraph::new(
-            "Paste a WireGuard config or type a .conf path  —  Enter to import, Esc to cancel",
-        )
-        .alignment(Alignment::Center)
-        .style(Style::default().fg(Color::DarkGray));
-    }
+/// Draws the WireGuard import view: instructions, a bordered paste/path box,
+/// and the action hints. Replaces the list while importing.
+fn render_import(frame: &mut Frame, area: Rect, modal: &VpnModal) {
+    let buf = modal.import_input.as_deref().unwrap_or("");
 
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(2), // instructions
+            Constraint::Fill(1),   // input box
+            Constraint::Length(1), // actions
+        ])
+        .split(area);
+
+    let info = Paragraph::new(vec![
+        Line::from("Import a WireGuard tunnel".bold()),
+        Line::from("Paste a config, or type a path to a .conf file".fg(Color::DarkGray)),
+    ])
+    .alignment(Alignment::Center);
+    frame.render_widget(info, chunks[0]);
+
+    let looks_like_config = buf.contains('\n') || buf.to_ascii_lowercase().contains("[interface]");
+    let body: Vec<Line> = if buf.is_empty() {
+        vec![Line::from("_".fg(Color::DarkGray))]
+    } else if looks_like_config {
+        vec![
+            Line::from(vec![
+                Span::from("✓ ").fg(Color::Green).bold(),
+                Span::from("Config received").bold(),
+            ]),
+            Line::from(
+                format!("{} lines, {} bytes", buf.lines().count(), buf.len()).fg(Color::DarkGray),
+            ),
+        ]
+    } else {
+        // A typed path: show it with a cursor.
+        vec![Line::from(format!("{buf}_"))]
+    };
+
+    let box_block = Block::default()
+        .title(" config / path ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Blue))
+        .padding(Padding::horizontal(1));
+    let input = Paragraph::new(body)
+        .block(box_block)
+        .wrap(Wrap { trim: false });
+    frame.render_widget(input, chunks[1]);
+
+    let actions = Line::from(vec![
+        Span::from("⏎").bold(),
+        Span::from(" Import   "),
+        Span::from("Esc").bold(),
+        Span::from(" Cancel"),
+    ]);
+    frame.render_widget(
+        Paragraph::new(actions)
+            .alignment(Alignment::Center)
+            .style(Style::default().fg(Color::Blue)),
+        chunks[2],
+    );
+}
+
+/// One-line detail for the selected entry: its assigned IPv4 and uptime while
+/// up. Blank when nothing is selected or the tunnel is down.
+fn detail(modal: &VpnModal) -> Paragraph<'static> {
     let text = modal
         .selected_entry()
         .filter(|e| e.is_active())
@@ -164,31 +226,6 @@ fn render_list(frame: &mut Frame, area: Rect, modal: &VpnModal) {
 }
 
 fn hint(modal: &VpnModal) -> Paragraph<'static> {
-    // While importing, the hint line is the input field. A pasted config is
-    // multi-line, so show a summary rather than the raw text; a typed path is
-    // shown inline with a cursor.
-    if let Some(buf) = &modal.import_input {
-        let looks_like_config =
-            buf.contains('\n') || buf.to_ascii_lowercase().contains("[interface]");
-        let line = if looks_like_config {
-            Line::from(vec![
-                Span::from("Config pasted ").bold(),
-                Span::from(format!(
-                    "({} lines) — press Enter to import",
-                    buf.lines().count()
-                )),
-            ])
-        } else {
-            Line::from(vec![
-                Span::from("Path: ").bold(),
-                Span::from(format!("{buf}_")),
-            ])
-        };
-        return Paragraph::new(line)
-            .alignment(Alignment::Left)
-            .style(Style::default().fg(Color::White));
-    }
-
     // A pending delete swaps the hint line for a confirmation prompt.
     if modal.pending_delete {
         let name = modal
