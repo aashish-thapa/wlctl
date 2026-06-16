@@ -12,10 +12,7 @@ use crate::mode::station::speed_test::SpeedTest;
 use crate::nm::{Mode, SecurityType};
 use crate::notification::{self, Notification};
 
-use crossterm::event::{
-    DisableBracketedPaste, EnableBracketedPaste, KeyCode, KeyEvent, KeyModifiers,
-};
-use crossterm::execute;
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use tokio::sync::mpsc::UnboundedSender;
 use tui_input::backend::crossterm::EventHandler;
 
@@ -149,27 +146,13 @@ async fn open_vpn(app: &mut App, sender: &UnboundedSender<Event>) {
     }
 }
 
-/// Toggles terminal bracketed paste. Enabled only while the VPN import field is
-/// open so a pasted config arrives as one `Event::Paste`; the rest of the app
-/// keeps its plain key-flood paste behavior. Best-effort — failure just means
-/// pasting won't be captured, while typing still works.
-fn set_bracketed_paste(on: bool) {
-    let mut out = std::io::stdout();
-    let _ = if on {
-        execute!(out, EnableBracketedPaste)
-    } else {
-        execute!(out, DisableBracketedPaste)
-    };
-}
-
 /// Appends pasted text to the VPN import field when it's open. Lets users paste
-/// a whole WireGuard config (or a path) instead of typing it.
+/// a whole WireGuard config (or a path) instead of typing it. No-op otherwise.
 pub fn handle_paste(app: &mut App, text: String) {
     if app.focused_block == FocusedBlock::Vpn
         && let Some(modal) = &mut app.vpn
-        && let Some(buf) = &mut modal.import_input
     {
-        buf.push_str(&text);
+        modal.import_append(&text);
     }
 }
 
@@ -186,49 +169,39 @@ async fn handle_vpn_keys(
     };
 
     // While importing, the modal captures all keys: type/paste a file path or a
-    // full WireGuard config, Enter to import, Esc to cancel.
-    if modal.import_input.is_some() {
+    // full WireGuard config, Enter to import, Esc to cancel. (Bracketed paste is
+    // enabled by the main loop while this prompt is open.)
+    if modal.import_buffer().is_some() {
         match key_event.code {
-            KeyCode::Esc => {
-                modal.import_input = None;
-                set_bracketed_paste(false);
-            }
-            KeyCode::Backspace => {
-                if let Some(buf) = &mut modal.import_input {
-                    buf.pop();
-                }
-            }
-            KeyCode::Char(c) => {
-                if let Some(buf) = &mut modal.import_input {
-                    buf.push(c);
-                }
-            }
+            KeyCode::Esc => modal.cancel_prompt(),
+            KeyCode::Backspace => modal.import_backspace(),
+            KeyCode::Char(c) => modal.import_append(c.encode_utf8(&mut [0u8; 4])),
             KeyCode::Enter => {
-                let raw = modal.import_input.take().unwrap_or_default();
-                set_bracketed_paste(false);
-                let input = raw.trim();
-                if !input.is_empty() {
-                    // A pasted config contains an [Interface] section; anything
-                    // else is treated as a path to a `.conf` file.
-                    let result = if input.to_ascii_lowercase().contains("[interface]") {
-                        crate::vpn::import_from_text(&app.client, input).await
-                    } else {
-                        crate::vpn::import_from_file(&app.client, input).await
-                    };
-                    match result {
-                        Ok(id) => {
-                            Notification::send(
-                                format!("Imported VPN {id}"),
-                                notification::NotificationLevel::Info,
+                if let Some(raw) = modal.take_import() {
+                    let input = raw.trim();
+                    if !input.is_empty() {
+                        // A pasted config contains an [Interface] section;
+                        // anything else is treated as a path to a `.conf` file.
+                        let result = if input.to_ascii_lowercase().contains("[interface]") {
+                            crate::vpn::import_from_text(&app.client, input).await
+                        } else {
+                            crate::vpn::import_from_file(&app.client, input).await
+                        };
+                        match result {
+                            Ok(id) => {
+                                Notification::send(
+                                    format!("Imported VPN {id}"),
+                                    notification::NotificationLevel::Info,
+                                    sender,
+                                )?;
+                                modal.refresh(&app.client).await?;
+                            }
+                            Err(e) => Notification::send(
+                                format!("Import failed: {e}"),
+                                notification::NotificationLevel::Error,
                                 sender,
-                            )?;
-                            modal.refresh(&app.client).await?;
+                            )?,
                         }
-                        Err(e) => Notification::send(
-                            format!("Import failed: {e}"),
-                            notification::NotificationLevel::Error,
-                            sender,
-                        )?,
                     }
                 }
             }
@@ -238,10 +211,10 @@ async fn handle_vpn_keys(
     }
 
     // A pending delete confirmation captures all keys until resolved.
-    if modal.pending_delete {
+    if modal.pending_delete().is_some() {
         match key_event.code {
             KeyCode::Char('y') | KeyCode::Char('Y') => {
-                match modal.delete_selected(&app.client).await {
+                match modal.delete_confirmed(&app.client).await {
                     Ok(Some(id)) => Notification::send(
                         format!("Deleted VPN {id}"),
                         notification::NotificationLevel::Info,
@@ -255,9 +228,7 @@ async fn handle_vpn_keys(
                     )?,
                 }
             }
-            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
-                modal.pending_delete = false;
-            }
+            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => modal.cancel_prompt(),
             _ => {}
         }
         return Ok(());
@@ -312,15 +283,8 @@ async fn handle_vpn_keys(
                 sender,
             )?,
         },
-        KeyCode::Char('d') => {
-            if modal.selected_entry().is_some() {
-                modal.pending_delete = true;
-            }
-        }
-        KeyCode::Char('i') => {
-            modal.import_input = Some(String::new());
-            set_bracketed_paste(true);
-        }
+        KeyCode::Char('d') => modal.begin_delete(),
+        KeyCode::Char('i') => modal.begin_import(),
         _ => {}
     }
 

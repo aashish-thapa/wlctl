@@ -66,8 +66,23 @@ async fn main() -> Result<()> {
 
     let mut exit_error_message = None;
 
+    // Tracks whether terminal bracketed paste is currently enabled. It's scoped
+    // to the VPN import field so pastes elsewhere keep their default behavior.
+    let mut bracketed_paste = false;
+
     while app.running {
         tui.draw(&mut app)?;
+
+        // Keep bracketed paste in sync with whether a text-input prompt is open.
+        let want_paste = app
+            .vpn
+            .as_ref()
+            .is_some_and(|m| m.import_buffer().is_some());
+        if want_paste != bracketed_paste {
+            let _ = tui.set_bracketed_paste(want_paste);
+            bracketed_paste = want_paste;
+        }
+
         match tui.events.next().await? {
             Event::Tick => {
                 if let Err(e) = app.tick().await {

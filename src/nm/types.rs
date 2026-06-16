@@ -336,6 +336,10 @@ pub struct VpnConnectionInfo {
     pub id: String,
     pub uuid: String,
     pub kind: VpnKind,
+    /// NetworkManager interface name (`connection.interface-name`); empty when
+    /// the profile doesn't pin one. Used to avoid interface-name collisions on
+    /// import.
+    pub interface_name: String,
     /// Whether NetworkManager brings this profile up automatically.
     pub autoconnect: bool,
     /// Epoch seconds of the profile's last successful activation (`0` if never).
