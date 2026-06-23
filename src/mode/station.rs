@@ -554,7 +554,6 @@ impl Station {
         //
         // Known networks
         //
-        let is_ethernet = self.is_ethernet_connected;
         let mut rows: Vec<Row> = self
             .known_networks
             .iter()
@@ -563,9 +562,9 @@ impl Station {
                 let signal_percent = (*signal / 100).clamp(0, 100);
                 let signal_str = format!("{}%", signal_percent);
 
-                // Don't show WiFi connected icon when Ethernet is the primary connection
-                if !is_ethernet
-                    && let Some(connected_net) = &self.connected_network
+                // WiFi can stay associated alongside an active Ethernet link, so
+                // mark the connected network regardless of the wired state.
+                if let Some(connected_net) = &self.connected_network
                     && connected_net.name == net.name
                 {
                     let row = vec![
