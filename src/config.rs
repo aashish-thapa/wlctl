@@ -146,6 +146,8 @@ pub struct NewNetwork {
     pub show_all: char,
     #[serde(default = "default_connect_hidden")]
     pub connect_hidden: char,
+    #[serde(default = "default_new_network_filter")]
+    pub filter: char,
 }
 
 impl Default for NewNetwork {
@@ -153,12 +155,17 @@ impl Default for NewNetwork {
         Self {
             show_all: 'a',
             connect_hidden: 'h',
+            filter: '/',
         }
     }
 }
 
 fn default_connect_hidden() -> char {
     'h'
+}
+
+fn default_new_network_filter() -> char {
+    '/'
 }
 
 // Access Point
