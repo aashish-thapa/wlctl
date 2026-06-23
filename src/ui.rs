@@ -33,7 +33,7 @@ pub fn render(app: &mut App, frame: &mut Frame) {
             let device = app.device.clone();
             match app.device.mode {
                 Mode::Station => {
-                    let primary_kind = app.primary_link.as_ref().map(|p| p.kind);
+                    let primary = app.primary_link.clone();
                     if let Some(station) = &mut app.device.station {
                         station.render(
                             frame,
@@ -41,7 +41,7 @@ pub fn render(app: &mut App, frame: &mut Frame) {
                             &device,
                             app.config.clone(),
                             &view,
-                            primary_kind,
+                            primary.as_ref(),
                         );
                     }
                 }
