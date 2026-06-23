@@ -7,7 +7,9 @@ pub mod speed_test;
 
 use std::sync::Arc;
 
-use crate::nm::{AccessPointInfo, ConnectionInfo, DiagnosticInfo, NMClient, StationState};
+use crate::nm::{
+    AccessPointInfo, ConnectionInfo, DiagnosticInfo, LinkKind, NMClient, StationState,
+};
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Flex, Layout},
@@ -445,6 +447,7 @@ impl Station {
         device: &Device,
         config: Arc<Config>,
         view: &AdapterView,
+        primary_kind: Option<LinkKind>,
     ) {
         let (known_networks_block, new_networks_block, device_block, help_block) = {
             let chunks = Layout::default()
@@ -567,16 +570,21 @@ impl Station {
                 if let Some(connected_net) = &self.connected_network
                     && connected_net.name == net.name
                 {
-                    let row = vec![
+                    let row = Row::new(vec![
                         Line::from("󰖩 ").centered(),
                         Line::from(known.name.clone()).centered(),
                         Line::from(known.network_type.to_string()).centered(),
                         Line::from(if known.is_hidden { "Yes" } else { "No" }).centered(),
                         Line::from(if known.is_autoconnect { "Yes" } else { "No" }).centered(),
                         Line::from(signal_str).centered(),
-                    ];
+                    ]);
 
-                    return Row::new(row);
+                    // Highlight the link NM is actually routing internet over.
+                    return if primary_kind == Some(LinkKind::Wifi) {
+                        row.green().bold()
+                    } else {
+                        row
+                    };
                 }
 
                 let row = vec![
@@ -602,6 +610,12 @@ impl Station {
                 Line::from("-").centered(),
                 Line::from("-").centered(),
             ]);
+            // Highlight Ethernet when it's the link carrying internet traffic.
+            let ethernet_row = if primary_kind == Some(LinkKind::Ethernet) {
+                ethernet_row.green().bold()
+            } else {
+                ethernet_row
+            };
             rows.insert(0, ethernet_row);
         }
 
@@ -872,6 +886,9 @@ impl Station {
                             Span::from(" | "),
                             Span::from(config.station.known_network.speed_test.to_string()).bold(),
                             Span::from(" Speed"),
+                            Span::from(" | "),
+                            Span::from(config.station.known_network.prefer.to_string()).bold(),
+                            Span::from(" Internet"),
                         ]),
                     ]
                 } else {
@@ -903,6 +920,9 @@ impl Station {
                         Span::from(" | "),
                         Span::from(config.station.known_network.speed_test.to_string()).bold(),
                         Span::from(" Speed"),
+                        Span::from(" | "),
+                        Span::from(config.station.known_network.prefer.to_string()).bold(),
+                        Span::from(" Internet"),
                         Span::from(" | "),
                         Span::from("ctrl+r").bold(),
                         Span::from(" Switch Mode"),
