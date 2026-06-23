@@ -72,7 +72,9 @@ Needs NetworkManager running. [Nerd Fonts](https://www.nerdfonts.com/) optional,
 | QR share | `p` |
 | Speed test (needs `speedtest-cli`) | `Shift+S` |
 
-When both WiFi and Ethernet are up, the link NetworkManager is actually routing internet over is highlighted in green. Press `u` on the Ethernet row or the connected WiFi to switch the default route to it (the other link stays up).
+When both WiFi and Ethernet are up, the link NetworkManager is actually routing internet over is highlighted in green, and the box footer spells it out (`󰖟 Internet: WiFi · <ssid>`). Press `u` on the Ethernet row or the connected WiFi to switch the default route to it (the other link stays up).
+
+The Device box footer shows the active adapter's LAN IP (e.g. `󰩟 wlan0 · 192.168.1.20`) so you can SSH in without running `ip addr`.
 
 ### New networks
 
@@ -80,7 +82,10 @@ When both WiFi and Ethernet are up, the link NetworkManager is actually routing 
 |---|---|
 | Connect / disconnect | `Space` or `Enter` |
 | Connect to hidden | `h` |
+| Filter by name | `/` |
 | Show all | `a` |
+
+Press `/` to filter the scan list by SSID as you type; `Enter` keeps the filter, `Esc` clears it.
 
 ### VPN connections (open with `v`)
 
@@ -146,6 +151,7 @@ prefer = "u"
 [station.new_network]
 show_all = "a"
 connect_hidden = "h"
+filter = "/"
 
 [access_point]
 start = "n"

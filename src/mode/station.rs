@@ -70,6 +70,15 @@ pub enum KnownNetworkSelection {
     Unavailable(usize),
 }
 
+/// Result of resolving the selected New Networks table row to real data,
+/// accounting for the SSID filter and the trailing hidden-networks rows.
+pub enum NewNetworkSelection {
+    /// A visible scanned network at the given `new_networks` index
+    Visible(usize),
+    /// A hidden network at the given `new_hidden_networks` index
+    Hidden(usize),
+}
+
 /// Hidden network representation for NetworkManager
 #[derive(Debug, Clone)]
 pub struct HiddenNetwork {
@@ -97,6 +106,13 @@ pub struct Station {
     pub show_hidden_networks: bool,
     pub share: Option<Share>,
     pub speed_test: Option<SpeedTest>,
+    /// Primary IPv4 of the active adapter, cached for the Device-box caption so
+    /// the LAN address (handy for SSH) is visible without leaving the TUI.
+    pub ipv4: Option<String>,
+    /// Live SSID filter for the New Networks list. Empty = inactive.
+    pub filter_query: String,
+    /// Whether the New Networks filter is currently being typed into.
+    pub filter_input: bool,
 }
 
 impl Station {
@@ -133,6 +149,8 @@ impl Station {
         let diagnostic =
             Self::fetch_diagnostic(&client, &device_path, connected_network.is_some()).await?;
 
+        let ipv4 = Self::fetch_device_ipv4(&client, &device_path).await;
+
         Ok(Self {
             client,
             device_path,
@@ -151,7 +169,21 @@ impl Station {
             show_hidden_networks: false,
             share: None,
             speed_test: None,
+            ipv4,
+            filter_query: String::new(),
+            filter_input: false,
         })
+    }
+
+    /// Reads the active adapter's primary IPv4, if any. Best-effort: a missing
+    /// or unreadable address just yields `None`.
+    async fn fetch_device_ipv4(client: &Arc<NMClient>, device_path: &str) -> Option<String> {
+        client
+            .get_ip4_info(device_path)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|ip| ip.addresses.into_iter().next().map(|(addr, _)| addr))
     }
 
     pub async fn refresh(&mut self) -> Result<()> {
@@ -193,6 +225,8 @@ impl Station {
             self.connected_network.is_some(),
         )
         .await?;
+
+        self.ipv4 = Self::fetch_device_ipv4(&self.client, &self.device_path).await;
 
         Ok(())
     }
@@ -425,6 +459,112 @@ impl Station {
         ethernet_offset + self.known_networks.len() + unavail
     }
 
+    /// True when an SSID filter is narrowing the New Networks list.
+    pub fn new_filter_active(&self) -> bool {
+        !self.filter_query.trim().is_empty()
+    }
+
+    /// Case-insensitive substring match used by the New Networks filter.
+    fn new_filter_matches(&self, name: &str) -> bool {
+        let query = self.filter_query.trim().to_lowercase();
+        query.is_empty() || name.to_lowercase().contains(&query)
+    }
+
+    /// Indices into `new_networks` currently visible under the filter, in order.
+    pub fn visible_new_indices(&self) -> Vec<usize> {
+        self.new_networks
+            .iter()
+            .enumerate()
+            .filter(|(_, (net, _))| self.new_filter_matches(&net.name))
+            .map(|(i, _)| i)
+            .collect()
+    }
+
+    /// Whether hidden-SSID rows are shown. They carry no SSID to match, so an
+    /// active filter suppresses them.
+    fn hidden_rows_visible(&self) -> bool {
+        self.show_hidden_networks && !self.new_filter_active()
+    }
+
+    /// Total rows the New Networks table renders, for cursor clamping.
+    pub fn new_networks_total_rows(&self) -> usize {
+        let hidden = if self.hidden_rows_visible() {
+            self.new_hidden_networks.len()
+        } else {
+            0
+        };
+        self.visible_new_indices().len() + hidden
+    }
+
+    /// Resolves the highlighted New Networks row to real data, mapping through
+    /// the filter so the cursor and the action target never diverge.
+    pub fn resolve_new_selection(&self) -> Option<NewNetworkSelection> {
+        let selected = self.new_networks_state.selected()?;
+        let visible = self.visible_new_indices();
+
+        if selected < visible.len() {
+            return Some(NewNetworkSelection::Visible(visible[selected]));
+        }
+        if !self.hidden_rows_visible() {
+            return None;
+        }
+        let hidden_index = selected - visible.len();
+        (hidden_index < self.new_hidden_networks.len())
+            .then_some(NewNetworkSelection::Hidden(hidden_index))
+    }
+
+    /// Snaps the New Networks cursor to a valid row after the filter changes.
+    fn reset_new_selection(&mut self) {
+        if self.new_networks_total_rows() == 0 {
+            self.new_networks_state.select(None);
+        } else {
+            self.new_networks_state.select(Some(0));
+        }
+    }
+
+    /// Begins typing an SSID filter on the New Networks list.
+    pub fn start_new_filter(&mut self) {
+        self.filter_input = true;
+    }
+
+    /// Appends a character to the active filter and re-anchors the cursor.
+    pub fn push_new_filter(&mut self, c: char) {
+        self.filter_query.push(c);
+        self.reset_new_selection();
+    }
+
+    /// Deletes the last filter character and re-anchors the cursor.
+    pub fn pop_new_filter(&mut self) {
+        self.filter_query.pop();
+        self.reset_new_selection();
+    }
+
+    /// Stops editing but keeps the filter applied.
+    pub fn commit_new_filter(&mut self) {
+        self.filter_input = false;
+    }
+
+    /// Clears the filter entirely and exits editing.
+    pub fn clear_new_filter(&mut self) {
+        self.filter_query.clear();
+        self.filter_input = false;
+        self.reset_new_selection();
+    }
+
+    /// Border caption for the New Networks box while a filter is being typed or
+    /// is applied; `None` otherwise. Includes the live match count.
+    fn new_filter_caption(&self) -> Option<String> {
+        if !self.filter_input && !self.new_filter_active() {
+            return None;
+        }
+        let matches = self.visible_new_indices().len();
+        if self.filter_input {
+            Some(format!(" / {}▏ ({matches}) ", self.filter_query))
+        } else {
+            Some(format!(" filter: {} ({matches}) ", self.filter_query))
+        }
+    }
+
     /// Row for the adapter currently active on this Station. Carries the full
     /// set of runtime columns (state/scanning/frequency/security) plus an
     /// optional active marker for the multi-adapter case.
@@ -531,31 +671,39 @@ impl Station {
                 }
             })
             .block(
-                Block::default()
-                    .title(" Device ")
-                    .title_style({
-                        if focused_block == FocusedBlock::Device {
-                            Style::default().bold()
-                        } else {
-                            Style::default()
-                        }
-                    })
-                    .borders(Borders::ALL)
-                    .border_style({
-                        if focused_block == FocusedBlock::Device {
-                            Style::default().fg(Color::Green)
-                        } else {
-                            Style::default()
-                        }
-                    })
-                    .border_type({
-                        if focused_block == FocusedBlock::Device {
-                            BorderType::Thick
-                        } else {
-                            BorderType::default()
-                        }
-                    })
-                    .padding(Padding::horizontal(1)),
+                {
+                    let block = Block::default().title(" Device ");
+                    // Surface the adapter's LAN IPv4 (handy for SSH) without
+                    // leaving the TUI.
+                    match self.ipv4.as_deref() {
+                        Some(ip) => block
+                            .title_bottom(Line::from(format!(" 󰩟 {} · {ip} ", device.name)).cyan()),
+                        None => block,
+                    }
+                }
+                .title_style({
+                    if focused_block == FocusedBlock::Device {
+                        Style::default().bold()
+                    } else {
+                        Style::default()
+                    }
+                })
+                .borders(Borders::ALL)
+                .border_style({
+                    if focused_block == FocusedBlock::Device {
+                        Style::default().fg(Color::Green)
+                    } else {
+                        Style::default()
+                    }
+                })
+                .border_type({
+                    if focused_block == FocusedBlock::Device {
+                        BorderType::Thick
+                    } else {
+                        BorderType::default()
+                    }
+                })
+                .padding(Padding::horizontal(1)),
             )
             .column_spacing(1)
             .flex(Flex::SpaceAround)
@@ -652,7 +800,9 @@ impl Station {
 
         let widths = [
             Constraint::Length(2),
-            Constraint::Length(25),
+            // 32 cells fits the max-length 32-byte SSID without clipping the
+            // centered name on both ends.
+            Constraint::Length(32),
             Constraint::Length(8),
             Constraint::Length(6),
             Constraint::Length(12),
@@ -736,9 +886,10 @@ impl Station {
         // New networks
         //
         let mut rows: Vec<Row> = self
-            .new_networks
-            .iter()
-            .map(|(net, signal)| {
+            .visible_new_indices()
+            .into_iter()
+            .map(|idx| {
+                let (net, signal) = &self.new_networks[idx];
                 let signal_percent = (*signal / 100).clamp(0, 100);
                 Row::new(vec![
                     Line::from(net.name.clone()).centered(),
@@ -756,7 +907,7 @@ impl Station {
             })
             .collect();
 
-        if self.show_hidden_networks {
+        if self.hidden_rows_visible() {
             self.new_hidden_networks.iter().for_each(|net| {
                 let signal_percent = (net.signal_strength / 100).clamp(0, 100);
                 rows.push(
@@ -779,7 +930,9 @@ impl Station {
         };
 
         let widths = [
-            Constraint::Length(25),
+            // 32 cells fits the max-length 32-byte SSID without clipping the
+            // centered name on both ends.
+            Constraint::Length(32),
             Constraint::Length(15),
             Constraint::Length(8),
         ];
@@ -804,31 +957,37 @@ impl Station {
                 }
             })
             .block(
-                Block::default()
-                    .title(" New Networks ")
-                    .title_style({
-                        if focused_block == FocusedBlock::NewNetworks {
-                            Style::default().bold()
-                        } else {
-                            Style::default()
-                        }
-                    })
-                    .borders(Borders::ALL)
-                    .border_style({
-                        if focused_block == FocusedBlock::NewNetworks {
-                            Style::default().fg(Color::Green)
-                        } else {
-                            Style::default()
-                        }
-                    })
-                    .border_type({
-                        if focused_block == FocusedBlock::NewNetworks {
-                            BorderType::Thick
-                        } else {
-                            BorderType::default()
-                        }
-                    })
-                    .padding(Padding::horizontal(1)),
+                {
+                    let block = Block::default().title(" New Networks ");
+                    // Show the live filter on the border while typing or applied.
+                    match self.new_filter_caption() {
+                        Some(caption) => block.title_bottom(Line::from(caption).yellow().bold()),
+                        None => block,
+                    }
+                }
+                .title_style({
+                    if focused_block == FocusedBlock::NewNetworks {
+                        Style::default().bold()
+                    } else {
+                        Style::default()
+                    }
+                })
+                .borders(Borders::ALL)
+                .border_style({
+                    if focused_block == FocusedBlock::NewNetworks {
+                        Style::default().fg(Color::Green)
+                    } else {
+                        Style::default()
+                    }
+                })
+                .border_type({
+                    if focused_block == FocusedBlock::NewNetworks {
+                        BorderType::Thick
+                    } else {
+                        BorderType::default()
+                    }
+                })
+                .padding(Padding::horizontal(1)),
             )
             .column_spacing(1)
             .flex(Flex::SpaceAround)
@@ -871,7 +1030,54 @@ impl Station {
                 vec![Line::from(spans)]
             }
             FocusedBlock::KnownNetworks => {
-                if frame.area().width <= 130 {
+                let single_line = Line::from(vec![
+                    Span::from("k,").bold(),
+                    Span::from("  Up"),
+                    Span::from(" | "),
+                    Span::from("j,").bold(),
+                    Span::from("  Down"),
+                    Span::from(" | "),
+                    Span::from("󱁐  or ↵ ").bold(),
+                    Span::from(" Dis/connect"),
+                    Span::from(" | "),
+                    Span::from(config.station.known_network.show_all.to_string()).bold(),
+                    Span::from(" Show All"),
+                    Span::from(" | "),
+                    Span::from(config.station.known_network.remove.to_string()).bold(),
+                    Span::from(" Remove"),
+                    Span::from(" | "),
+                    Span::from(config.station.known_network.toggle_autoconnect.to_string())
+                        .bold(),
+                    Span::from(" Autoconnect"),
+                    Span::from(" | "),
+                    Span::from(config.station.start_scanning.to_string()).bold(),
+                    Span::from(" Scan"),
+                    Span::from(" | "),
+                    Span::from(config.station.known_network.share.to_string()).bold(),
+                    Span::from(" Share"),
+                    Span::from(" | "),
+                    Span::from(config.station.known_network.speed_test.to_string()).bold(),
+                    Span::from(" Speed"),
+                    Span::from(" | "),
+                    Span::from(config.station.known_network.prefer.to_string()).bold(),
+                    Span::from(" Internet"),
+                    Span::from(" | "),
+                    Span::from("ctrl+r").bold(),
+                    Span::from(" Switch Mode"),
+                    Span::from(" | "),
+                    Span::from("⇄").bold(),
+                    Span::from(" Nav"),
+                ]);
+                // The VPN hint is appended to the last line below, so account
+                // for it when deciding if the one-line layout fits.
+                let vpn_suffix_width =
+                    Line::from(crate::device::vpn_hint_spans(config.vpn)).width() as u16;
+                let one_line_fits = single_line.width() as u16 + vpn_suffix_width
+                    <= help_block.width;
+
+                if one_line_fits {
+                    vec![single_line]
+                } else {
                     vec![
                         Line::from(vec![
                             Span::from("󱁐  or ↵ ").bold(),
@@ -913,49 +1119,45 @@ impl Station {
                             Span::from(" Internet"),
                         ]),
                     ]
-                } else {
-                    vec![Line::from(vec![
-                        Span::from("k,").bold(),
-                        Span::from("  Up"),
-                        Span::from(" | "),
-                        Span::from("j,").bold(),
-                        Span::from("  Down"),
-                        Span::from(" | "),
-                        Span::from("󱁐  or ↵ ").bold(),
-                        Span::from(" Dis/connect"),
-                        Span::from(" | "),
-                        Span::from(config.station.known_network.show_all.to_string()).bold(),
-                        Span::from(" Show All"),
-                        Span::from(" | "),
-                        Span::from(config.station.known_network.remove.to_string()).bold(),
-                        Span::from(" Remove"),
-                        Span::from(" | "),
-                        Span::from(config.station.known_network.toggle_autoconnect.to_string())
-                            .bold(),
-                        Span::from(" Autoconnect"),
-                        Span::from(" | "),
-                        Span::from(config.station.start_scanning.to_string()).bold(),
-                        Span::from(" Scan"),
-                        Span::from(" | "),
-                        Span::from(config.station.known_network.share.to_string()).bold(),
-                        Span::from(" Share"),
-                        Span::from(" | "),
-                        Span::from(config.station.known_network.speed_test.to_string()).bold(),
-                        Span::from(" Speed"),
-                        Span::from(" | "),
-                        Span::from(config.station.known_network.prefer.to_string()).bold(),
-                        Span::from(" Internet"),
-                        Span::from(" | "),
-                        Span::from("ctrl+r").bold(),
-                        Span::from(" Switch Mode"),
-                        Span::from(" | "),
-                        Span::from("⇄").bold(),
-                        Span::from(" Nav"),
-                    ])]
                 }
             }
             FocusedBlock::NewNetworks => {
-                if frame.area().width < 80 {
+                let single_line = Line::from(vec![
+                    Span::from("k,").bold(),
+                    Span::from("  Up"),
+                    Span::from(" | "),
+                    Span::from("j,").bold(),
+                    Span::from("  Down"),
+                    Span::from(" | "),
+                    Span::from("󱁐  or ↵ ").bold(),
+                    Span::from(" Connect"),
+                    Span::from(" | "),
+                    Span::from(config.station.new_network.connect_hidden.to_string()).bold(),
+                    Span::from(" Hidden"),
+                    Span::from(" | "),
+                    Span::from(config.station.new_network.show_all.to_string()).bold(),
+                    Span::from(" Show All"),
+                    Span::from(" | "),
+                    Span::from(config.station.new_network.filter.to_string()).bold(),
+                    Span::from(" Filter"),
+                    Span::from(" | "),
+                    Span::from(config.station.start_scanning.to_string()).bold(),
+                    Span::from(" Scan"),
+                    Span::from(" | "),
+                    Span::from("ctrl+r").bold(),
+                    Span::from(" Switch Mode"),
+                    Span::from(" | "),
+                    Span::from("⇄").bold(),
+                    Span::from(" Nav"),
+                ]);
+                let vpn_suffix_width =
+                    Line::from(crate::device::vpn_hint_spans(config.vpn)).width() as u16;
+                let one_line_fits = single_line.width() as u16 + vpn_suffix_width
+                    <= help_block.width;
+
+                if one_line_fits {
+                    vec![single_line]
+                } else {
                     vec![
                         Line::from(vec![
                             Span::from("󱁐  or ↵ ").bold(),
@@ -964,6 +1166,9 @@ impl Station {
                             Span::from(config.station.new_network.connect_hidden.to_string())
                                 .bold(),
                             Span::from(" Hidden"),
+                            Span::from(" | "),
+                            Span::from(config.station.new_network.filter.to_string()).bold(),
+                            Span::from(" Filter"),
                             Span::from(" | "),
                             Span::from(config.station.start_scanning.to_string()).bold(),
                             Span::from(" Scan"),
@@ -982,32 +1187,6 @@ impl Station {
                             Span::from(" Nav"),
                         ]),
                     ]
-                } else {
-                    vec![Line::from(vec![
-                        Span::from("k,").bold(),
-                        Span::from("  Up"),
-                        Span::from(" | "),
-                        Span::from("j,").bold(),
-                        Span::from("  Down"),
-                        Span::from(" | "),
-                        Span::from("󱁐  or ↵ ").bold(),
-                        Span::from(" Connect"),
-                        Span::from(" | "),
-                        Span::from(config.station.new_network.connect_hidden.to_string()).bold(),
-                        Span::from(" Hidden"),
-                        Span::from(" | "),
-                        Span::from(config.station.new_network.show_all.to_string()).bold(),
-                        Span::from(" Show All"),
-                        Span::from(" | "),
-                        Span::from(config.station.start_scanning.to_string()).bold(),
-                        Span::from(" Scan"),
-                        Span::from(" | "),
-                        Span::from("ctrl+r").bold(),
-                        Span::from(" Switch Mode"),
-                        Span::from(" | "),
-                        Span::from("⇄").bold(),
-                        Span::from(" Nav"),
-                    ])]
                 }
             }
             FocusedBlock::AdapterInfos => {
