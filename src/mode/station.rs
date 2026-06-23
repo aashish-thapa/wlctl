@@ -8,7 +8,7 @@ pub mod speed_test;
 use std::sync::Arc;
 
 use crate::nm::{
-    AccessPointInfo, ConnectionInfo, DiagnosticInfo, LinkKind, NMClient, StationState,
+    AccessPointInfo, ConnectionInfo, DiagnosticInfo, LinkKind, NMClient, PrimaryLink, StationState,
 };
 use ratatui::{
     Frame,
@@ -44,6 +44,19 @@ fn inactive_station_row<'a>(name: &str) -> Row<'a> {
         Line::from("-").centered(),
         Line::from("").centered(),
     ])
+}
+
+/// Caption for the Known Networks box naming the link that currently carries
+/// internet traffic. `None` when the route is something not shown in this list
+/// (e.g. a VPN, which the top-right badge already reports).
+fn internet_caption(primary: Option<&PrimaryLink>) -> Option<String> {
+    let primary = primary?;
+    let label = match primary.kind {
+        LinkKind::Wifi => format!("WiFi · {}", primary.id),
+        LinkKind::Ethernet => "Ethernet".to_string(),
+        LinkKind::Other => return None,
+    };
+    Some(format!(" 󰖟 Internet: {label} "))
 }
 
 /// Result of resolving the selected known networks table index,
@@ -447,8 +460,10 @@ impl Station {
         device: &Device,
         config: Arc<Config>,
         view: &AdapterView,
-        primary_kind: Option<LinkKind>,
+        primary: Option<&PrimaryLink>,
     ) {
+        // Which link kind owns the default route, used to highlight its row.
+        let primary_kind = primary.map(|p| p.kind);
         let (known_networks_block, new_networks_block, device_block, help_block) = {
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
@@ -670,31 +685,38 @@ impl Station {
                 }
             })
             .block(
-                Block::default()
-                    .title(" Known Networks ")
-                    .title_style({
-                        if focused_block == FocusedBlock::KnownNetworks {
-                            Style::default().bold()
-                        } else {
-                            Style::default()
-                        }
-                    })
-                    .borders(Borders::ALL)
-                    .border_style({
-                        if focused_block == FocusedBlock::KnownNetworks {
-                            Style::default().fg(Color::Green)
-                        } else {
-                            Style::default()
-                        }
-                    })
-                    .border_type({
-                        if focused_block == FocusedBlock::KnownNetworks {
-                            BorderType::Thick
-                        } else {
-                            BorderType::default()
-                        }
-                    })
-                    .padding(Padding::horizontal(1)),
+                {
+                    let block = Block::default().title(" Known Networks ");
+                    // Spell out which link is the live internet path so the green
+                    // highlight isn't the only cue.
+                    match internet_caption(primary) {
+                        Some(caption) => block.title_bottom(Line::from(caption).green().bold()),
+                        None => block,
+                    }
+                }
+                .title_style({
+                    if focused_block == FocusedBlock::KnownNetworks {
+                        Style::default().bold()
+                    } else {
+                        Style::default()
+                    }
+                })
+                .borders(Borders::ALL)
+                .border_style({
+                    if focused_block == FocusedBlock::KnownNetworks {
+                        Style::default().fg(Color::Green)
+                    } else {
+                        Style::default()
+                    }
+                })
+                .border_type({
+                    if focused_block == FocusedBlock::KnownNetworks {
+                        BorderType::Thick
+                    } else {
+                        BorderType::default()
+                    }
+                })
+                .padding(Padding::horizontal(1)),
             )
             .column_spacing(1)
             .flex(Flex::SpaceAround)
