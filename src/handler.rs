@@ -720,6 +720,19 @@ pub async fn handle_key_events(
                         }
                     }
                     _ => {
+                        // Esc clears an applied SSID filter even after Enter
+                        // commits it (filter_input is false but the query is
+                        // still in effect). Without this, Esc would fall
+                        // through to global handling — possibly quitting.
+                        if app.focused_block == FocusedBlock::NewNetworks
+                            && key_event.code == KeyCode::Esc
+                            && !station.filter_input
+                            && station.new_filter_active()
+                        {
+                            station.clear_new_filter();
+                            return Ok(());
+                        }
+
                         // Typing an SSID filter captures keys before the global
                         // quit/scan/Tab shortcuts, so 'q', 's', etc. land in the
                         // query instead of triggering actions.

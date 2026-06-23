@@ -552,16 +552,23 @@ impl Station {
     }
 
     /// Border caption for the New Networks box while a filter is being typed or
-    /// is applied; `None` otherwise. Includes the live match count.
+    /// is applied; `None` otherwise. Includes the live match count and a
+    /// keys hint so the modal-style input is discoverable without docs.
     fn new_filter_caption(&self) -> Option<String> {
         if !self.filter_input && !self.new_filter_active() {
             return None;
         }
         let matches = self.visible_new_indices().len();
         if self.filter_input {
-            Some(format!(" / {}▏ ({matches}) ", self.filter_query))
+            Some(format!(
+                " / {}▏ ({matches}) · ↵ apply · esc cancel ",
+                self.filter_query
+            ))
         } else {
-            Some(format!(" filter: {} ({matches}) ", self.filter_query))
+            Some(format!(
+                " filter: {} ({matches}) · esc clears ",
+                self.filter_query
+            ))
         }
     }
 
@@ -1046,8 +1053,7 @@ impl Station {
                     Span::from(config.station.known_network.remove.to_string()).bold(),
                     Span::from(" Remove"),
                     Span::from(" | "),
-                    Span::from(config.station.known_network.toggle_autoconnect.to_string())
-                        .bold(),
+                    Span::from(config.station.known_network.toggle_autoconnect.to_string()).bold(),
                     Span::from(" Autoconnect"),
                     Span::from(" | "),
                     Span::from(config.station.start_scanning.to_string()).bold(),
@@ -1072,8 +1078,8 @@ impl Station {
                 // for it when deciding if the one-line layout fits.
                 let vpn_suffix_width =
                     Line::from(crate::device::vpn_hint_spans(config.vpn)).width() as u16;
-                let one_line_fits = single_line.width() as u16 + vpn_suffix_width
-                    <= help_block.width;
+                let one_line_fits =
+                    single_line.width() as u16 + vpn_suffix_width <= help_block.width;
 
                 if one_line_fits {
                     vec![single_line]
@@ -1152,8 +1158,8 @@ impl Station {
                 ]);
                 let vpn_suffix_width =
                     Line::from(crate::device::vpn_hint_spans(config.vpn)).width() as u16;
-                let one_line_fits = single_line.width() as u16 + vpn_suffix_width
-                    <= help_block.width;
+                let one_line_fits =
+                    single_line.width() as u16 + vpn_suffix_width <= help_block.width;
 
                 if one_line_fits {
                     vec![single_line]
@@ -1224,12 +1230,31 @@ impl Station {
             ])],
         };
 
+        // While the SSID filter input is active, override the help row with
+        // the keys that actually do something. The VPN hint is also skipped:
+        // `v` lands in the query, not the modal.
+        let typing_filter = focused_block == FocusedBlock::NewNetworks && self.filter_input;
+        if typing_filter {
+            help_message = vec![Line::from(vec![
+                Span::from(" ↵ ").bold(),
+                Span::from(" Apply"),
+                Span::from(" | "),
+                Span::from("󱊷 ").bold(),
+                Span::from(" Cancel"),
+                Span::from(" | "),
+                Span::from("⌫ ").bold(),
+                Span::from(" Delete"),
+            ])];
+        }
+
         // Advertise the global VPN shortcut from every list view by appending
         // it to the last help row.
-        if matches!(
-            focused_block,
-            FocusedBlock::Device | FocusedBlock::KnownNetworks | FocusedBlock::NewNetworks
-        ) && let Some(last) = help_message.last_mut()
+        if !typing_filter
+            && matches!(
+                focused_block,
+                FocusedBlock::Device | FocusedBlock::KnownNetworks | FocusedBlock::NewNetworks
+            )
+            && let Some(last) = help_message.last_mut()
         {
             last.spans.extend(crate::device::vpn_hint_spans(config.vpn));
         }
