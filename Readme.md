@@ -67,9 +67,12 @@ Needs NetworkManager running. [Nerd Fonts](https://www.nerdfonts.com/) optional,
 | Connect / disconnect | `Space` or `Enter` |
 | Toggle auto-connect | `t` |
 | Forget network | `d` |
+| Make this the internet path | `u` |
 | Show all | `a` |
 | QR share | `p` |
 | Speed test (needs `speedtest-cli`) | `Shift+S` |
+
+When both WiFi and Ethernet are up, the link NetworkManager is actually routing internet over is highlighted in green. Press `u` on the Ethernet row or the connected WiFi to switch the default route to it (the other link stays up).
 
 ### New networks
 
@@ -138,6 +141,7 @@ remove = "d"
 show_all = "a"
 share = "p"
 speed_test = "S"
+prefer = "u"
 
 [station.new_network]
 show_all = "a"

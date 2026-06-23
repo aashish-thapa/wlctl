@@ -16,6 +16,14 @@ pub use types::*;
 const NM_BUS_NAME: &str = "org.freedesktop.NetworkManager";
 const NM_PATH: &str = "/org/freedesktop/NetworkManager";
 
+/// An activated physical (WiFi/Ethernet) connection paired with its device,
+/// used when reshuffling the default route between links.
+struct PhysicalLink {
+    kind: LinkKind,
+    connection_path: String,
+    device_path: String,
+}
+
 /// Reads a string field out of one NetworkManager settings section, returning
 /// `None` if the key is absent or not string-convertible.
 fn setting_str(section: &HashMap<String, OwnedValue>, key: &str) -> Option<String> {
@@ -1050,6 +1058,144 @@ impl NMClient {
         }
 
         Ok(None)
+    }
+
+    /// The connection NetworkManager is currently using as the default route —
+    /// the link that actually carries internet traffic. `None` when NM reports
+    /// no primary connection (e.g. nothing is online).
+    pub async fn primary_link(&self) -> Result<Option<PrimaryLink>> {
+        let proxy = Proxy::new(
+            &self.connection,
+            NM_BUS_NAME,
+            NM_PATH,
+            "org.freedesktop.NetworkManager",
+        )
+        .await?;
+
+        let path: OwnedObjectPath = proxy.get_property("PrimaryConnection").await?;
+        if path.as_str() == "/" {
+            return Ok(None);
+        }
+
+        let info = self.get_active_connection_info(path.as_str()).await?;
+        let nm_type: String = proxy
+            .get_property("PrimaryConnectionType")
+            .await
+            .unwrap_or_default();
+
+        Ok(Some(PrimaryLink {
+            id: info.id,
+            kind: LinkKind::from_nm_type(&nm_type),
+        }))
+    }
+
+    /// Activated WiFi / Ethernet connections paired with their device, used to
+    /// reason about and reshuffle the default route. VPNs, bridges and other
+    /// virtual links are skipped.
+    async fn active_physical_links(&self) -> Result<Vec<PhysicalLink>> {
+        let mut links = Vec::new();
+
+        for conn_path in self.get_active_connections().await? {
+            let Ok(info) = self.get_active_connection_info(conn_path.as_str()).await else {
+                continue;
+            };
+            if info.state != ActiveConnectionState::Activated {
+                continue;
+            }
+
+            let Ok(settings) = self.get_connection_settings(&info.connection_path).await else {
+                continue;
+            };
+            let nm_type = settings
+                .get("connection")
+                .and_then(|c| c.get("type"))
+                .and_then(|t| t.try_clone().ok())
+                .and_then(|t| String::try_from(t).ok())
+                .unwrap_or_default();
+            let kind = LinkKind::from_nm_type(&nm_type);
+            if kind == LinkKind::Other {
+                continue;
+            }
+
+            let Some(device_path) = info.devices.first().cloned() else {
+                continue;
+            };
+
+            links.push(PhysicalLink {
+                kind,
+                connection_path: info.connection_path,
+                device_path,
+            });
+        }
+
+        Ok(links)
+    }
+
+    /// Sets the IPv4 and IPv6 route metric on a saved connection. Lower wins, so
+    /// this is how the default route is steered between links. Existing settings
+    /// are preserved; only the metric keys are touched.
+    async fn set_route_metric(&self, connection_path: &str, metric: i64) -> Result<()> {
+        let proxy = Proxy::new(
+            &self.connection,
+            NM_BUS_NAME,
+            connection_path,
+            "org.freedesktop.NetworkManager.Settings.Connection",
+        )
+        .await?;
+
+        let mut settings: HashMap<String, HashMap<String, OwnedValue>> =
+            proxy.call("GetSettings", &()).await?;
+
+        for family in ["ipv4", "ipv6"] {
+            settings
+                .entry(family.to_string())
+                .or_default()
+                .insert("route-metric".to_string(), OwnedValue::from(metric));
+        }
+
+        let _: () = proxy.call("Update", &(settings,)).await?;
+        Ok(())
+    }
+
+    /// Make the active link of `kind` the default route (the internet path)
+    /// while leaving the other links up. Gives the chosen link a low route
+    /// metric and the others a high one, then reactivates them so NM applies the
+    /// change — which briefly blips each affected link.
+    pub async fn prefer_internet(&self, kind: LinkKind) -> Result<()> {
+        const PREFERRED_METRIC: i64 = 50;
+        const DEPRIORITIZED_METRIC: i64 = 600;
+
+        let links = self.active_physical_links().await?;
+        if !links.iter().any(|l| l.kind == kind) {
+            anyhow::bail!("No active {kind} link to switch to");
+        }
+        if links.len() < 2 {
+            anyhow::bail!("{kind} is already the only internet path");
+        }
+
+        for link in &links {
+            let metric = if link.kind == kind {
+                PREFERRED_METRIC
+            } else {
+                DEPRIORITIZED_METRIC
+            };
+            self.set_route_metric(&link.connection_path, metric).await?;
+        }
+
+        // Reactivate the deprioritized links first, then the chosen one last so
+        // it ends up owning the default route. Other-link failures are
+        // best-effort; the chosen link must succeed.
+        for link in links.iter().filter(|l| l.kind != kind) {
+            let _ = self
+                .activate_connection(&link.connection_path, &link.device_path)
+                .await;
+        }
+        if let Some(target) = links.iter().find(|l| l.kind == kind) {
+            self.activate_connection(&target.connection_path, &target.device_path)
+                .await?;
+        }
+
+        Ok(())
     }
 
     /// Get active connection info

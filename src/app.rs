@@ -4,7 +4,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc::UnboundedSender;
 use zbus::zvariant::OwnedObjectPath;
 
-use crate::nm::{EthernetInfo, Mode, NMClient};
+use crate::nm::{EthernetInfo, Mode, NMClient, PrimaryLink};
 
 use crate::{
     adapter::Adapter, agent::AuthAgent, config::Config, device::Device, doctor::DoctorModal,
@@ -168,6 +168,9 @@ pub struct App {
     /// (not on the WiFi device) so link status stays visible even when the WiFi
     /// radio is off.
     pub ethernet: Option<EthernetInfo>,
+    /// Link NetworkManager is using as the default route, refreshed each tick.
+    /// Flags which of WiFi/Ethernet is the live internet path.
+    pub primary_link: Option<PrimaryLink>,
 }
 
 impl App {
@@ -234,6 +237,7 @@ Error: {}",
             vpn: None,
             active_vpns: Vec::new(),
             ethernet: None,
+            primary_link: None,
         })
     }
 
@@ -394,6 +398,11 @@ Error: {}",
         // of the WiFi power state so it stays visible when the radio is off.
         if let Ok(eth) = self.client.active_ethernet().await {
             self.ethernet = eth;
+        }
+
+        // Refresh which link owns the default route (the live internet path).
+        if let Ok(primary) = self.client.primary_link().await {
+            self.primary_link = primary;
         }
 
         Ok(())
