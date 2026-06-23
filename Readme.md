@@ -68,11 +68,12 @@ Needs NetworkManager running. [Nerd Fonts](https://www.nerdfonts.com/) optional,
 | Toggle auto-connect | `t` |
 | Forget network | `d` |
 | Make this the internet path | `u` |
+| Open captive-portal login | `l` |
 | Show all | `a` |
 | QR share | `p` |
 | Speed test (needs `speedtest-cli`) | `Shift+S` |
 
-When both WiFi and Ethernet are up, the link NetworkManager is actually routing internet over is highlighted in green, and the box footer spells it out (`󰖟 Internet: WiFi · <ssid>`). Press `u` on the Ethernet row or the connected WiFi to switch the default route to it (the other link stays up).
+When both WiFi and Ethernet are up, the link NetworkManager is actually routing internet over is highlighted in green, and the box footer spells it out (`󰖟 Internet: WiFi · <ssid>`). Press `u` on the Ethernet row or the connected WiFi to switch the default route to it (the other link stays up). If you're connected but stuck behind a captive portal the footer says so — press `l` to open the login page in your browser.
 
 The Device box footer shows the active adapter's LAN IP (e.g. `󰩟 wlan0 · 192.168.1.20`) so you can SSH in without running `ip addr`.
 
@@ -147,6 +148,7 @@ show_all = "a"
 share = "p"
 speed_test = "S"
 prefer = "u"
+portal = "l"
 
 [station.new_network]
 show_all = "a"

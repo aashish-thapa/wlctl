@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   caption naming it
 - Switch the internet path with `u` — make the Ethernet row or connected WiFi
   the default route while keeping the other link up
+- Captive-portal helper: the footer flags when you're connected but offline, and
+  `l` opens the login page in your browser
 - Filter the New Networks scan list by SSID with `/`
 - Device box footer shows the active adapter's LAN IP (handy for SSH)
 

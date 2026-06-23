@@ -4,7 +4,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc::UnboundedSender;
 use zbus::zvariant::OwnedObjectPath;
 
-use crate::nm::{EthernetInfo, Mode, NMClient, PrimaryLink};
+use crate::nm::{Connectivity, EthernetInfo, Mode, NMClient, PrimaryLink};
 
 use crate::{
     adapter::Adapter, agent::AuthAgent, config::Config, device::Device, doctor::DoctorModal,
@@ -171,6 +171,9 @@ pub struct App {
     /// Link NetworkManager is using as the default route, refreshed each tick.
     /// Flags which of WiFi/Ethernet is the live internet path.
     pub primary_link: Option<PrimaryLink>,
+    /// Cached connectivity state, refreshed each tick. Drives the captive-portal
+    /// hint so the user knows when they're connected but stuck behind a login.
+    pub connectivity: Connectivity,
 }
 
 impl App {
@@ -238,6 +241,7 @@ Error: {}",
             active_vpns: Vec::new(),
             ethernet: None,
             primary_link: None,
+            connectivity: Connectivity::Unknown,
         })
     }
 
@@ -404,6 +408,15 @@ Error: {}",
         if let Ok(primary) = self.client.primary_link().await {
             self.primary_link = primary;
         }
+
+        // Refresh cached connectivity for the captive-portal hint. On failure
+        // fall back to Unknown rather than retaining a stale Full, which would
+        // otherwise hide the portal shortcut behind the "already online" guard.
+        self.connectivity = self
+            .client
+            .connectivity_state()
+            .await
+            .unwrap_or(Connectivity::Unknown);
 
         Ok(())
     }

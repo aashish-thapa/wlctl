@@ -28,6 +28,8 @@ pub mod agent;
 
 pub mod nm;
 
+pub mod portal;
+
 pub mod doctor;
 
 pub mod vpn;

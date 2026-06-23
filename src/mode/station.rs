@@ -8,7 +8,8 @@ pub mod speed_test;
 use std::sync::Arc;
 
 use crate::nm::{
-    AccessPointInfo, ConnectionInfo, DiagnosticInfo, LinkKind, NMClient, PrimaryLink, StationState,
+    AccessPointInfo, ConnectionInfo, Connectivity, DiagnosticInfo, LinkKind, NMClient, PrimaryLink,
+    StationState,
 };
 use ratatui::{
     Frame,
@@ -47,16 +48,23 @@ fn inactive_station_row<'a>(name: &str) -> Row<'a> {
 }
 
 /// Caption for the Known Networks box naming the link that currently carries
-/// internet traffic. `None` when the route is something not shown in this list
-/// (e.g. a VPN, which the top-right badge already reports).
-fn internet_caption(primary: Option<&PrimaryLink>) -> Option<String> {
+/// internet traffic, plus a hint when that link isn't actually online (e.g.
+/// stuck behind a captive portal). `None` when the route is something not shown
+/// in this list (e.g. a VPN, which the top-right badge already reports).
+fn internet_caption(primary: Option<&PrimaryLink>, connectivity: Connectivity) -> Option<String> {
     let primary = primary?;
     let label = match primary.kind {
         LinkKind::Wifi => format!("WiFi · {}", primary.id),
         LinkKind::Ethernet => "Ethernet".to_string(),
         LinkKind::Other => return None,
     };
-    Some(format!(" 󰖟 Internet: {label} "))
+    let status = match connectivity {
+        Connectivity::Portal => " · captive portal",
+        Connectivity::Limited => " · no internet",
+        Connectivity::None => " · offline",
+        Connectivity::Full | Connectivity::Unknown => "",
+    };
+    Some(format!(" 󰖟 Internet: {label}{status} "))
 }
 
 /// Result of resolving the selected known networks table index,
@@ -68,6 +76,15 @@ pub enum KnownNetworkSelection {
     Network(usize),
     /// An unavailable (saved but not visible) network at the given index
     Unavailable(usize),
+}
+
+/// Network-status context passed into [`Station::render`]: which link owns the
+/// default route and the current connectivity. Bundled so the render signature
+/// stays small.
+#[derive(Clone, Copy)]
+pub struct StationStatus<'a> {
+    pub primary: Option<&'a PrimaryLink>,
+    pub connectivity: Connectivity,
 }
 
 /// Result of resolving the selected New Networks table row to real data,
@@ -600,8 +617,12 @@ impl Station {
         device: &Device,
         config: Arc<Config>,
         view: &AdapterView,
-        primary: Option<&PrimaryLink>,
+        status: StationStatus,
     ) {
+        let StationStatus {
+            primary,
+            connectivity,
+        } = status;
         // Which link kind owns the default route, used to highlight its row.
         let primary_kind = primary.map(|p| p.kind);
         let (known_networks_block, new_networks_block, device_block, help_block) = {
@@ -838,9 +859,20 @@ impl Station {
                 {
                     let block = Block::default().title(" Known Networks ");
                     // Spell out which link is the live internet path so the green
-                    // highlight isn't the only cue.
-                    match internet_caption(primary) {
-                        Some(caption) => block.title_bottom(Line::from(caption).green().bold()),
+                    // highlight isn't the only cue. Turn the caption amber when
+                    // the link is up but not actually online (e.g. portal).
+                    match internet_caption(primary, connectivity) {
+                        Some(caption) => {
+                            let line = Line::from(caption).bold();
+                            let line = if connectivity == Connectivity::Full
+                                || connectivity == Connectivity::Unknown
+                            {
+                                line.green()
+                            } else {
+                                line.yellow()
+                            };
+                            block.title_bottom(line)
+                        }
                         None => block,
                     }
                 }
@@ -1062,6 +1094,9 @@ impl Station {
                     Span::from(config.station.known_network.prefer.to_string()).bold(),
                     Span::from(" Internet"),
                     Span::from(" | "),
+                    Span::from(config.station.known_network.portal.to_string()).bold(),
+                    Span::from(" Portal"),
+                    Span::from(" | "),
                     Span::from("ctrl+r").bold(),
                     Span::from(" Switch Mode"),
                     Span::from(" | "),
@@ -1117,6 +1152,9 @@ impl Station {
                             Span::from(" | "),
                             Span::from(config.station.known_network.prefer.to_string()).bold(),
                             Span::from(" Internet"),
+                            Span::from(" | "),
+                            Span::from(config.station.known_network.portal.to_string()).bold(),
+                            Span::from(" Portal"),
                         ]),
                     ]
                 }

@@ -274,6 +274,22 @@ impl NMClient {
         Ok(Connectivity::from(state))
     }
 
+    /// NetworkManager's cached connectivity state. Reads the `Connectivity`
+    /// property instead of forcing a fresh probe, so it's cheap enough to poll
+    /// each tick for the captive-portal indicator.
+    pub async fn connectivity_state(&self) -> Result<Connectivity> {
+        let proxy = Proxy::new(
+            &self.connection,
+            NM_BUS_NAME,
+            NM_PATH,
+            "org.freedesktop.NetworkManager",
+        )
+        .await?;
+
+        let state: u32 = proxy.get_property("Connectivity").await?;
+        Ok(Connectivity::from(state))
+    }
+
     /// Get device state
     pub async fn get_device_state(&self, device_path: &str) -> Result<DeviceState> {
         let proxy = Proxy::new(

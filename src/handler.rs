@@ -9,8 +9,9 @@ use crate::mode::ap::APFocusedSection;
 use crate::mode::station::share::Share;
 use crate::mode::station::speed_test::SpeedTest;
 use crate::mode::station::{KnownNetworkSelection, NewNetworkSelection};
-use crate::nm::{LinkKind, Mode, SecurityType};
+use crate::nm::{Connectivity, LinkKind, Mode, SecurityType};
 use crate::notification::{self, Notification};
+use crate::portal;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use tokio::sync::mpsc::UnboundedSender;
@@ -988,6 +989,45 @@ pub async fn handle_key_events(
                                                         &sender,
                                                     )?;
                                                 }
+                                            }
+                                        }
+
+                                        // Open the captive-portal login page
+                                        KeyCode::Char(c)
+                                            if c == config.station.known_network.portal =>
+                                        {
+                                            if app.connectivity == Connectivity::Full {
+                                                Notification::send(
+                                                    "Already online — no captive portal"
+                                                        .to_string(),
+                                                    notification::NotificationLevel::Info,
+                                                    &sender,
+                                                )?;
+                                            } else {
+                                                let sender_clone = sender.clone();
+                                                tokio::spawn(async move {
+                                                    let url = portal::detect_portal_url()
+                                                        .await
+                                                        .unwrap_or_else(|| {
+                                                            portal::FALLBACK_URL.to_string()
+                                                        });
+                                                    let (msg, level) = match portal::open_url(&url)
+                                                    {
+                                                        Ok(()) => (
+                                                            format!("Opening portal login · {url}"),
+                                                            notification::NotificationLevel::Info,
+                                                        ),
+                                                        Err(e) => (
+                                                            e.to_string(),
+                                                            notification::NotificationLevel::Error,
+                                                        ),
+                                                    };
+                                                    let _ = Notification::send(
+                                                        msg,
+                                                        level,
+                                                        &sender_clone,
+                                                    );
+                                                });
                                             }
                                         }
 

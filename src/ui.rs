@@ -34,14 +34,19 @@ pub fn render(app: &mut App, frame: &mut Frame) {
             match app.device.mode {
                 Mode::Station => {
                     let primary = app.primary_link.clone();
+                    let connectivity = app.connectivity;
                     if let Some(station) = &mut app.device.station {
+                        let status = crate::mode::station::StationStatus {
+                            primary: primary.as_ref(),
+                            connectivity,
+                        };
                         station.render(
                             frame,
                             app.focused_block,
                             &device,
                             app.config.clone(),
                             &view,
-                            primary.as_ref(),
+                            status,
                         );
                     }
                 }
