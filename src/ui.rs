@@ -22,8 +22,13 @@ pub fn render(app: &mut App, frame: &mut Frame) {
         };
 
         if !app.device.is_powered {
-            app.device
-                .render(frame, app.focused_block, app.config.clone(), &view)
+            app.device.render(
+                frame,
+                app.focused_block,
+                app.config.clone(),
+                &view,
+                app.ethernet.as_ref(),
+            )
         } else {
             let device = app.device.clone();
             match app.device.mode {

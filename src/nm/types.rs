@@ -25,6 +25,16 @@ pub struct WgConfig {
     pub peer: WgPeerConfig,
 }
 
+/// Summary of an active wired (802-3-ethernet) connection. Tracked
+/// independently of the WiFi device so link status stays visible even when the
+/// WiFi radio is powered off.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EthernetInfo {
+    pub id: String,
+    pub interface: Option<String>,
+    pub ipv4: Option<String>,
+}
+
 /// Active IPv4 configuration pulled from an NM device's `Ip4Config` object.
 #[derive(Debug, Clone, Default)]
 pub struct Ip4Info {

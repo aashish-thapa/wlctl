@@ -4,7 +4,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc::UnboundedSender;
 use zbus::zvariant::OwnedObjectPath;
 
-use crate::nm::{Mode, NMClient};
+use crate::nm::{EthernetInfo, Mode, NMClient};
 
 use crate::{
     adapter::Adapter, agent::AuthAgent, config::Config, device::Device, doctor::DoctorModal,
@@ -164,6 +164,10 @@ pub struct App {
     /// Names of currently-active VPN/WireGuard tunnels, refreshed each tick.
     /// Drives the always-on status badge regardless of whether the modal is open.
     pub active_vpns: Vec<String>,
+    /// Active wired connection, refreshed each tick. Tracked at the app level
+    /// (not on the WiFi device) so link status stays visible even when the WiFi
+    /// radio is off.
+    pub ethernet: Option<EthernetInfo>,
 }
 
 impl App {
@@ -229,6 +233,7 @@ Error: {}",
             doctor_run_id: 0,
             vpn: None,
             active_vpns: Vec::new(),
+            ethernet: None,
         })
     }
 
@@ -383,6 +388,12 @@ Error: {}",
         // shouldn't take down the whole tick, so failures just leave it stale.
         if let Ok(names) = self.client.get_active_vpn_names().await {
             self.active_vpns = names;
+        }
+
+        // Refresh wired link status. Best-effort, and intentionally independent
+        // of the WiFi power state so it stays visible when the radio is off.
+        if let Ok(eth) = self.client.active_ethernet().await {
+            self.ethernet = eth;
         }
 
         Ok(())

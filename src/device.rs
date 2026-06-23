@@ -2,7 +2,7 @@ use anyhow::Result;
 use std::sync::Arc;
 use zbus::zvariant::OwnedObjectPath;
 
-use crate::nm::{Mode, NMClient};
+use crate::nm::{EthernetInfo, Mode, NMClient};
 
 use ratatui::{
     Frame,
@@ -151,18 +151,20 @@ impl Device {
         focused_block: FocusedBlock,
         config: Arc<Config>,
         view: &AdapterView,
+        ethernet: Option<&EthernetInfo>,
     ) {
-        let (device_block, help_block) = {
+        let (device_block, ethernet_block, help_block) = {
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([
                     Constraint::Fill(1),
                     Constraint::Length(AdapterView::BLOCK_HEIGHT),
                     Constraint::Length(1),
+                    Constraint::Length(1),
                 ])
                 .margin(1)
                 .split(frame.area());
-            (chunks[1], chunks[2])
+            (chunks[1], chunks[2], chunks[3])
         };
 
         let is_powered = self.is_powered;
@@ -202,6 +204,8 @@ impl Device {
         let mut device_state =
             TableState::default().with_selected(view.table_selection(focused_block));
         frame.render_stateful_widget(device_table, device_block, &mut device_state);
+
+        frame.render_widget(ethernet_status_line(ethernet), ethernet_block);
 
         let help_message = Self::help_line(focused_block, &config, view.is_multi());
         frame.render_widget(help_message.centered().blue(), help_block);
@@ -257,6 +261,35 @@ pub fn vpn_hint_spans<'a>(vpn_key: char) -> Vec<Span<'a>> {
     ]
 }
 
+/// Status line shown beneath the Device block while the WiFi radio is off.
+/// Surfaces wired connectivity so the user can tell they're still online over
+/// Ethernet — otherwise the powered-off view looks like a total outage.
+fn ethernet_status_line<'a>(ethernet: Option<&EthernetInfo>) -> Line<'a> {
+    let line = Line::from(ethernet_status_text(ethernet)).centered();
+    if ethernet.is_some() {
+        line.green()
+    } else {
+        line.fg(Color::DarkGray)
+    }
+}
+
+/// Builds the wired-status label. Kept pure (no styling) so the wording and
+/// detail composition can be unit-tested without a terminal.
+fn ethernet_status_text(ethernet: Option<&EthernetInfo>) -> String {
+    let Some(eth) = ethernet else {
+        return "󰈀  No wired connection".to_string();
+    };
+    let detail: Vec<String> = [eth.interface.clone(), eth.ipv4.clone()]
+        .into_iter()
+        .flatten()
+        .collect();
+    if detail.is_empty() {
+        "󰈀  Ethernet connected".to_string()
+    } else {
+        format!("󰈀  Ethernet connected — {}", detail.join(" · "))
+    }
+}
+
 fn active_device_row<'a>(name: &str, is_powered: bool, marker: &str) -> Row<'a> {
     Row::new(vec![
         Line::from(name.to_string()).centered(),
@@ -271,4 +304,47 @@ fn inactive_device_row<'a>(name: &str) -> Row<'a> {
         Line::from("-").centered(),
         Line::from("").centered(),
     ])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn eth(interface: Option<&str>, ipv4: Option<&str>) -> EthernetInfo {
+        EthernetInfo {
+            id: "Wired connection 1".to_string(),
+            interface: interface.map(str::to_string),
+            ipv4: ipv4.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn status_text_reports_no_wired_link() {
+        assert_eq!(ethernet_status_text(None), "󰈀  No wired connection");
+    }
+
+    #[test]
+    fn status_text_includes_interface_and_ip() {
+        let info = eth(Some("enp3s0"), Some("192.168.1.20"));
+        assert_eq!(
+            ethernet_status_text(Some(&info)),
+            "󰈀  Ethernet connected — enp3s0 · 192.168.1.20"
+        );
+    }
+
+    #[test]
+    fn status_text_omits_missing_detail() {
+        // Interface known but no IPv4 yet (e.g. mid-DHCP): show what we have.
+        let info = eth(Some("enp3s0"), None);
+        assert_eq!(
+            ethernet_status_text(Some(&info)),
+            "󰈀  Ethernet connected — enp3s0"
+        );
+    }
+
+    #[test]
+    fn status_text_bare_when_no_detail() {
+        let info = eth(None, None);
+        assert_eq!(ethernet_status_text(Some(&info)), "󰈀  Ethernet connected");
+    }
 }
