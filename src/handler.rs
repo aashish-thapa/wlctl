@@ -9,7 +9,7 @@ use crate::mode::ap::APFocusedSection;
 use crate::mode::station::KnownNetworkSelection;
 use crate::mode::station::share::Share;
 use crate::mode::station::speed_test::SpeedTest;
-use crate::nm::{Mode, SecurityType};
+use crate::nm::{LinkKind, Mode, SecurityType};
 use crate::notification::{self, Notification};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -913,6 +913,68 @@ pub async fn handle_key_events(
                                                     notification::NotificationLevel::Warning,
                                                     &sender,
                                                 )?;
+                                            }
+                                        }
+
+                                        // Prefer this link as the internet path
+                                        KeyCode::Char(c)
+                                            if c == config.station.known_network.prefer =>
+                                        {
+                                            // Only an active link can carry the
+                                            // default route: the Ethernet row, or
+                                            // the currently-connected WiFi.
+                                            let kind = match station.resolve_known_selection() {
+                                                Some(KnownNetworkSelection::Ethernet) => {
+                                                    Some(LinkKind::Ethernet)
+                                                }
+                                                Some(KnownNetworkSelection::Network(idx)) => {
+                                                    let (net, _) = &station.known_networks[idx];
+                                                    if station
+                                                        .connected_network
+                                                        .as_ref()
+                                                        .map(|c| &c.name)
+                                                        == Some(&net.name)
+                                                    {
+                                                        Some(LinkKind::Wifi)
+                                                    } else {
+                                                        None
+                                                    }
+                                                }
+                                                _ => None,
+                                            };
+
+                                            match kind {
+                                                Some(kind) => {
+                                                    let client = app.client.clone();
+                                                    let sender_clone = sender.clone();
+                                                    tokio::spawn(async move {
+                                                        let (msg, level) = match client
+                                                            .prefer_internet(kind)
+                                                            .await
+                                                        {
+                                                            Ok(()) => (
+                                                                format!("Internet now over {kind}"),
+                                                                notification::NotificationLevel::Info,
+                                                            ),
+                                                            Err(e) => (
+                                                                e.to_string(),
+                                                                notification::NotificationLevel::Error,
+                                                            ),
+                                                        };
+                                                        let _ = Notification::send(
+                                                            msg,
+                                                            level,
+                                                            &sender_clone,
+                                                        );
+                                                    });
+                                                }
+                                                None => {
+                                                    Notification::send(
+                                                        "Connect to this link first to make it the internet path".to_string(),
+                                                        notification::NotificationLevel::Warning,
+                                                        &sender,
+                                                    )?;
+                                                }
                                             }
                                         }
 

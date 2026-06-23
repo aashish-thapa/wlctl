@@ -35,6 +35,45 @@ pub struct EthernetInfo {
     pub ipv4: Option<String>,
 }
 
+/// Kind of physical link, derived from a NetworkManager connection type. Used
+/// to flag and switch which link carries the default route.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LinkKind {
+    Wifi,
+    Ethernet,
+    Other,
+}
+
+impl LinkKind {
+    /// Maps a NetworkManager connection `type` string to a link kind.
+    pub fn from_nm_type(nm_type: &str) -> Self {
+        match nm_type {
+            "802-11-wireless" => LinkKind::Wifi,
+            "802-3-ethernet" => LinkKind::Ethernet,
+            _ => LinkKind::Other,
+        }
+    }
+}
+
+impl fmt::Display for LinkKind {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            LinkKind::Wifi => write!(f, "WiFi"),
+            LinkKind::Ethernet => write!(f, "Ethernet"),
+            LinkKind::Other => write!(f, "connection"),
+        }
+    }
+}
+
+/// The connection NetworkManager is using as the default route — i.e. the link
+/// that actually carries internet traffic. Resolved from the Manager's
+/// `PrimaryConnection`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrimaryLink {
+    pub id: String,
+    pub kind: LinkKind,
+}
+
 /// Active IPv4 configuration pulled from an NM device's `Ip4Config` object.
 #[derive(Debug, Clone, Default)]
 pub struct Ip4Info {

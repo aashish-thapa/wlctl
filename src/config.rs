@@ -112,6 +112,8 @@ pub struct KnownNetwork {
     pub share: char,
     #[serde(default = "default_station_speed_test")]
     pub speed_test: char,
+    #[serde(default = "default_station_prefer")]
+    pub prefer: char,
 }
 
 impl Default for KnownNetwork {
@@ -122,8 +124,13 @@ impl Default for KnownNetwork {
             show_all: 'a',
             share: 'p',
             speed_test: 'S',
+            prefer: 'u',
         }
     }
+}
+
+fn default_station_prefer() -> char {
+    'u'
 }
 
 fn default_station_speed_test() -> char {
