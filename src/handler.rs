@@ -6,9 +6,9 @@ use crate::config::Config;
 use crate::device::Device;
 use crate::event::Event;
 use crate::mode::ap::APFocusedSection;
-use crate::mode::station::KnownNetworkSelection;
 use crate::mode::station::share::Share;
 use crate::mode::station::speed_test::SpeedTest;
+use crate::mode::station::{KnownNetworkSelection, NewNetworkSelection};
 use crate::nm::{LinkKind, Mode, SecurityType};
 use crate::notification::{self, Notification};
 
@@ -20,9 +20,9 @@ pub async fn toggle_connect(app: &mut App, sender: UnboundedSender<Event>) -> Re
     if let Some(station) = &mut app.device.station {
         match app.focused_block {
             FocusedBlock::NewNetworks => {
-                if let Some(net_index) = station.new_networks_state.selected() {
-                    if net_index < station.new_networks.len() {
-                        let (net, _) = station.new_networks[net_index].clone();
+                match station.resolve_new_selection() {
+                    Some(NewNetworkSelection::Visible(idx)) => {
+                        let (net, _) = station.new_networks[idx].clone();
 
                         // Check if it's an enterprise network
                         if net.network_type == SecurityType::Enterprise {
@@ -46,11 +46,9 @@ pub async fn toggle_connect(app: &mut App, sender: UnboundedSender<Event>) -> Re
                         tokio::spawn(async move {
                             let _ = net.connect(sender.clone(), None).await;
                         });
-                    } else {
-                        // Hidden network selected
-                        let net = station.new_hidden_networks
-                            [net_index.saturating_sub(station.new_networks.len())]
-                        .clone();
+                    }
+                    Some(NewNetworkSelection::Hidden(idx)) => {
+                        let net = station.new_hidden_networks[idx].clone();
 
                         if net.network_type == "8021x" {
                             sender.send(Event::ConfigureNewEapNetwork(net.address.clone()))?;
@@ -64,6 +62,7 @@ pub async fn toggle_connect(app: &mut App, sender: UnboundedSender<Event>) -> Re
                             &sender,
                         );
                     }
+                    None => {}
                 }
             }
             FocusedBlock::KnownNetworks => {
@@ -721,6 +720,20 @@ pub async fn handle_key_events(
                         }
                     }
                     _ => {
+                        // Typing an SSID filter captures keys before the global
+                        // quit/scan/Tab shortcuts, so 'q', 's', etc. land in the
+                        // query instead of triggering actions.
+                        if app.focused_block == FocusedBlock::NewNetworks && station.filter_input {
+                            match key_event.code {
+                                KeyCode::Esc => station.clear_new_filter(),
+                                KeyCode::Enter => station.commit_new_filter(),
+                                KeyCode::Backspace => station.pop_new_filter(),
+                                KeyCode::Char(c) => station.push_new_filter(c),
+                                _ => {}
+                            }
+                            return Ok(());
+                        }
+
                         match key_event.code {
                             KeyCode::Char('q') => {
                                 app.quit();
@@ -1010,6 +1023,10 @@ pub async fn handle_key_events(
                                     }
                                 }
                                 FocusedBlock::NewNetworks => match key_event.code {
+                                    // Start filtering the scan list by SSID
+                                    KeyCode::Char(c) if c == config.station.new_network.filter => {
+                                        station.start_new_filter();
+                                    }
                                     // Show / Hide unavailable networks
                                     KeyCode::Char(c)
                                         if c == config.station.new_network.show_all =>
@@ -1026,34 +1043,25 @@ pub async fn handle_key_events(
                                     KeyCode::Enter | KeyCode::Char(' ') => {
                                         toggle_connect(app, sender).await?
                                     }
-                                    KeyCode::Char('j') | KeyCode::Down
-                                        if !station.new_networks.is_empty() =>
-                                    {
-                                        let i = match station.new_networks_state.selected() {
-                                            Some(i) => {
-                                                let limit = if station.show_hidden_networks {
-                                                    station.new_networks.len()
-                                                        + station.new_hidden_networks.len()
-                                                        - 1
-                                                } else {
-                                                    station.new_networks.len() - 1
-                                                };
-                                                if i < limit { i + 1 } else { i }
-                                            }
-                                            None => 0,
-                                        };
-
-                                        station.new_networks_state.select(Some(i));
+                                    KeyCode::Char('j') | KeyCode::Down => {
+                                        let total = station.new_networks_total_rows();
+                                        if total > 0 {
+                                            let i = match station.new_networks_state.selected() {
+                                                Some(i) => (i + 1).min(total - 1),
+                                                None => 0,
+                                            };
+                                            station.new_networks_state.select(Some(i));
+                                        }
                                     }
-                                    KeyCode::Char('k') | KeyCode::Up
-                                        if !station.new_networks.is_empty() =>
-                                    {
-                                        let i = match station.new_networks_state.selected() {
-                                            Some(i) => i.saturating_sub(1),
-                                            None => 0,
-                                        };
-
-                                        station.new_networks_state.select(Some(i));
+                                    KeyCode::Char('k') | KeyCode::Up => {
+                                        let total = station.new_networks_total_rows();
+                                        if total > 0 {
+                                            let i = match station.new_networks_state.selected() {
+                                                Some(i) => i.saturating_sub(1),
+                                                None => 0,
+                                            };
+                                            station.new_networks_state.select(Some(i));
+                                        }
                                     }
                                     _ => {}
                                 },
