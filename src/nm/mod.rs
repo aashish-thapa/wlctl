@@ -992,29 +992,64 @@ impl NMClient {
         Ok(proxy.get_property("ActiveConnections").await?)
     }
 
-    /// Check if there's an active Ethernet connection
+    /// Check if there's an active Ethernet connection.
     pub async fn has_active_ethernet_connection(&self) -> Result<bool> {
+        Ok(self.active_ethernet().await?.is_some())
+    }
+
+    /// Details of the first activated wired (`802-3-ethernet`) connection, if
+    /// any. Resolved independently of the WiFi device so link status can be
+    /// shown even while the WiFi radio is off. Includes the device interface
+    /// and primary IPv4 address when they can be read; those are best-effort
+    /// and left `None` rather than failing the whole lookup.
+    pub async fn active_ethernet(&self) -> Result<Option<EthernetInfo>> {
         let active_connections = self.get_active_connections().await?;
 
         for conn_path in active_connections {
-            if let Ok(info) = self.get_active_connection_info(conn_path.as_str()).await {
-                // Get the connection settings to check the type
-                if let Ok(settings) = self.get_connection_settings(&info.connection_path).await
-                    && let Some(connection) = settings.get("connection")
-                    && let Some(conn_type) = connection.get("type")
-                {
-                    let type_str: String = conn_type.try_clone()?.try_into()?;
-                    // 802-3-ethernet is the NetworkManager type for wired connections
-                    if type_str == "802-3-ethernet"
-                        && info.state == ActiveConnectionState::Activated
-                    {
-                        return Ok(true);
-                    }
-                }
+            let Ok(info) = self.get_active_connection_info(conn_path.as_str()).await else {
+                continue;
+            };
+            if info.state != ActiveConnectionState::Activated {
+                continue;
             }
+
+            // 802-3-ethernet is the NetworkManager type for wired connections.
+            let Ok(settings) = self.get_connection_settings(&info.connection_path).await else {
+                continue;
+            };
+            let is_ethernet = settings
+                .get("connection")
+                .and_then(|c| c.get("type"))
+                .and_then(|t| t.try_clone().ok())
+                .and_then(|t| String::try_from(t).ok())
+                .is_some_and(|t| t == "802-3-ethernet");
+            if !is_ethernet {
+                continue;
+            }
+
+            let device_path = info.devices.first().cloned();
+            let interface = match &device_path {
+                Some(path) => self.get_device_interface(path).await.ok(),
+                None => None,
+            };
+            let ipv4 = match &device_path {
+                Some(path) => self
+                    .get_ip4_info(path)
+                    .await
+                    .ok()
+                    .flatten()
+                    .and_then(|ip| ip.addresses.into_iter().next().map(|(addr, _)| addr)),
+                None => None,
+            };
+
+            return Ok(Some(EthernetInfo {
+                id: info.id,
+                interface,
+                ipv4,
+            }));
         }
 
-        Ok(false)
+        Ok(None)
     }
 
     /// Get active connection info
