@@ -418,6 +418,59 @@ impl From<u32> for ActiveConnectionState {
     }
 }
 
+/// Classification of why an activation attempt did not reach `Activated`.
+/// Maps NetworkManager's `NMActiveConnectionStateReason` codes into the
+/// distinctions the UI actually surfaces to the user.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActivationFailureReason {
+    /// Wrong / missing passphrase (NM reasons `NoSecrets` and `LoginFailed`).
+    BadSecrets,
+    /// Activation did not reach a terminal state within our wait window.
+    Timeout,
+    /// Any other terminal failure; carries the raw NM reason code so callers
+    /// can log it without inventing a name for every value.
+    Other(u32),
+}
+
+impl ActivationFailureReason {
+    /// Map a raw `NMActiveConnectionStateReason` to our classification.
+    ///
+    /// The Active-Connection layer almost always reports `DeviceDisconnected`
+    /// (3) when the real failure happened at the device layer — use
+    /// [`Self::from_nm_device_reason`] in tandem to get the canonical reason.
+    pub fn from_nm_active_reason(reason: u32) -> Self {
+        // 9  = NM_ACTIVE_CONNECTION_STATE_REASON_NO_SECRETS
+        // 10 = NM_ACTIVE_CONNECTION_STATE_REASON_LOGIN_FAILED
+        match reason {
+            9 | 10 => Self::BadSecrets,
+            other => Self::Other(other),
+        }
+    }
+
+    /// Map a raw `NMDeviceStateReason` to our classification.
+    ///
+    /// This is where the wifi-specific auth-failure signals actually live —
+    /// the Active-Connection signal only ever reports `DeviceDisconnected` (3)
+    /// for these cases, which is useless to the user.
+    pub fn from_nm_device_reason(reason: u32) -> Self {
+        // 7  = NM_DEVICE_STATE_REASON_NO_SECRETS
+        // 8  = NM_DEVICE_STATE_REASON_SUPPLICANT_DISCONNECT
+        // 9  = NM_DEVICE_STATE_REASON_SUPPLICANT_CONFIG_FAILED
+        // 10 = NM_DEVICE_STATE_REASON_SUPPLICANT_FAILED
+        match reason {
+            7..=10 => Self::BadSecrets,
+            other => Self::Other(other),
+        }
+    }
+}
+
+/// Terminal result of waiting on an active connection's state machine.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActivationOutcome {
+    Activated,
+    Failed(ActivationFailureReason),
+}
+
 /// Active connection info
 #[derive(Debug, Clone)]
 pub struct ActiveConnectionInfo {
@@ -641,6 +694,48 @@ mod tests {
         assert_eq!(
             ActiveConnectionState::from(4),
             ActiveConnectionState::Deactivated
+        );
+    }
+
+    #[test]
+    fn test_activation_failure_reason_from_nm_active_reason() {
+        assert_eq!(
+            ActivationFailureReason::from_nm_active_reason(9),
+            ActivationFailureReason::BadSecrets
+        );
+        assert_eq!(
+            ActivationFailureReason::from_nm_active_reason(10),
+            ActivationFailureReason::BadSecrets
+        );
+        // 3 (DeviceDisconnected) is the AC-layer code we see for device-side
+        // auth failures — must NOT classify as BadSecrets at this layer.
+        assert_eq!(
+            ActivationFailureReason::from_nm_active_reason(3),
+            ActivationFailureReason::Other(3)
+        );
+        assert_eq!(
+            ActivationFailureReason::from_nm_active_reason(0),
+            ActivationFailureReason::Other(0)
+        );
+    }
+
+    #[test]
+    fn test_activation_failure_reason_from_nm_device_reason() {
+        for code in [7, 8, 9, 10] {
+            assert_eq!(
+                ActivationFailureReason::from_nm_device_reason(code),
+                ActivationFailureReason::BadSecrets,
+                "device reason {} should classify as BadSecrets",
+                code
+            );
+        }
+        assert_eq!(
+            ActivationFailureReason::from_nm_device_reason(0),
+            ActivationFailureReason::Other(0)
+        );
+        assert_eq!(
+            ActivationFailureReason::from_nm_device_reason(6),
+            ActivationFailureReason::Other(6)
         );
     }
 }

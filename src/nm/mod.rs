@@ -1227,6 +1227,118 @@ impl NMClient {
         })
     }
 
+    /// Wait for an activation attempt to reach a terminal state.
+    ///
+    /// Returns once the active connection is `Activated` or `Deactivated`, or
+    /// after `ACTIVATION_TIMEOUT` if NM never settles.
+    ///
+    /// Watches **two** signal streams concurrently:
+    ///
+    /// * `Connection.Active.StateChanged` decides *when* we are done — it is
+    ///   the unambiguous terminal event for our specific activation attempt.
+    /// * `Device.StateChanged` is what carries the canonical failure reason
+    ///   for the wifi case. The Active-Connection layer collapses every
+    ///   device-side failure into reason `3` (`DeviceDisconnected`), which is
+    ///   useless to the user; the Device emits the real
+    ///   `NMDeviceStateReason` (e.g. `NoSecrets`, `SupplicantDisconnect`)
+    ///   on its transition into `Failed`.
+    ///
+    /// We cache the most recent device failure reason and surface it the
+    /// instant the active connection reports `Deactivated`.
+    pub async fn await_activation(
+        &self,
+        active_path: &str,
+        device_path: &str,
+    ) -> Result<ActivationOutcome> {
+        use futures::StreamExt;
+
+        const ACTIVATION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(45);
+
+        let ac_proxy = Proxy::new(
+            &self.connection,
+            NM_BUS_NAME,
+            active_path,
+            "org.freedesktop.NetworkManager.Connection.Active",
+        )
+        .await?;
+        let dev_proxy = Proxy::new(
+            &self.connection,
+            NM_BUS_NAME,
+            device_path,
+            "org.freedesktop.NetworkManager.Device",
+        )
+        .await?;
+
+        let mut ac_signals = ac_proxy.receive_signal("StateChanged").await?;
+        let mut dev_signals = dev_proxy.receive_signal("StateChanged").await?;
+
+        // Fast path: if the active connection is already terminal at
+        // subscription time, decide now. We deliberately don't peek at the
+        // device's current state — a fallback activation may have already
+        // raced past Failed, in which case the property would mislead us.
+        if let Ok(current) = ac_proxy.get_property::<u32>("State").await {
+            match ActiveConnectionState::from(current) {
+                ActiveConnectionState::Activated => return Ok(ActivationOutcome::Activated),
+                ActiveConnectionState::Deactivated => {
+                    return Ok(ActivationOutcome::Failed(ActivationFailureReason::Other(0)));
+                }
+                _ => {}
+            }
+        }
+
+        let wait = async {
+            // Most recent reason observed for a device transition into Failed.
+            // Stays at `None` until we actually see Failed; a falsy/0 reason
+            // would otherwise be indistinguishable from "never seen".
+            let mut last_device_failure_reason: Option<u32> = None;
+            // Once a stream ends it would immediately re-yield `Ready(None)`
+            // on every poll; gate each branch so `select!` stops polling it.
+            let mut dev_done = false;
+            loop {
+                tokio::select! {
+                    msg = ac_signals.next() => {
+                        let Some(msg) = msg else { break };
+                        let Ok((state, ac_reason)) = msg.body().deserialize::<(u32, u32)>() else {
+                            continue;
+                        };
+                        match ActiveConnectionState::from(state) {
+                            ActiveConnectionState::Activated => {
+                                return ActivationOutcome::Activated;
+                            }
+                            ActiveConnectionState::Deactivated => {
+                                let reason = match last_device_failure_reason {
+                                    Some(r) => ActivationFailureReason::from_nm_device_reason(r),
+                                    None => ActivationFailureReason::from_nm_active_reason(ac_reason),
+                                };
+                                return ActivationOutcome::Failed(reason);
+                            }
+                            _ => continue,
+                        }
+                    }
+                    msg = dev_signals.next(), if !dev_done => {
+                        let Some(msg) = msg else {
+                            dev_done = true;
+                            continue;
+                        };
+                        let Ok((new_state, _old_state, reason)) =
+                            msg.body().deserialize::<(u32, u32, u32)>()
+                        else {
+                            continue;
+                        };
+                        if DeviceState::from(new_state) == DeviceState::Failed {
+                            last_device_failure_reason = Some(reason);
+                        }
+                    }
+                }
+            }
+            ActivationOutcome::Failed(ActivationFailureReason::Other(0))
+        };
+
+        Ok(tokio::time::timeout(ACTIVATION_TIMEOUT, wait)
+            .await
+            .unwrap_or(ActivationOutcome::Failed(ActivationFailureReason::Timeout)))
+    }
+
     /// Create a WiFi hotspot
     pub async fn create_hotspot(
         &self,
