@@ -46,6 +46,21 @@ fn inactive_station_row<'a>(name: &str) -> Row<'a> {
     ])
 }
 
+/// One "key Label | " trio for a help line. Callers chain `extend(hint(…))`
+/// and `pop()` the final separator. Centralizing the format keeps every help
+/// row syntactically identical, so adding a shortcut is a one-line change
+/// instead of three coordinated `Span::from` calls.
+fn hint(
+    key: impl Into<std::borrow::Cow<'static, str>>,
+    label: impl Into<std::borrow::Cow<'static, str>>,
+) -> [Span<'static>; 3] {
+    [
+        Span::from(key.into()).bold(),
+        Span::from(label.into()),
+        Span::from(" | "),
+    ]
+}
+
 /// Caption for the Known Networks box naming the link that currently carries
 /// internet traffic. `None` when the route is something not shown in this list
 /// (e.g. a VPN, which the top-right badge already reports).
@@ -113,6 +128,10 @@ pub struct Station {
     pub filter_query: String,
     /// Whether the New Networks filter is currently being typed into.
     pub filter_input: bool,
+    /// Indices into `new_networks` matching the current filter, in row order.
+    /// Cached so each render pass doesn't re-walk + re-lowercase every SSID;
+    /// recomputed only when `new_networks` is replaced or the filter mutates.
+    visible_new: Vec<usize>,
 }
 
 impl Station {
@@ -151,6 +170,9 @@ impl Station {
 
         let ipv4 = Self::fetch_device_ipv4(&client, &device_path).await;
 
+        // No filter at startup, so every visible AP is in the visible set.
+        let visible_new = (0..new_networks.len()).collect();
+
         Ok(Self {
             client,
             device_path,
@@ -172,6 +194,7 @@ impl Station {
             ipv4,
             filter_query: String::new(),
             filter_input: false,
+            visible_new,
         })
     }
 
@@ -213,6 +236,9 @@ impl Station {
             |s| &mut s.new_networks,
             |s| &mut s.new_networks_state,
         );
+        // `new_networks` just changed under us — rebuild the filtered view so
+        // the cursor and the rendered rows agree on what's visible.
+        self.recompute_visible_new();
         self.update_known_network_list(&known_networks);
 
         self.unavailable_known_networks =
@@ -460,24 +486,33 @@ impl Station {
     }
 
     /// True when an SSID filter is narrowing the New Networks list.
-    pub fn new_filter_active(&self) -> bool {
+    pub(crate) fn new_filter_active(&self) -> bool {
         !self.filter_query.trim().is_empty()
     }
 
-    /// Case-insensitive substring match used by the New Networks filter.
-    fn new_filter_matches(&self, name: &str) -> bool {
-        let query = self.filter_query.trim().to_lowercase();
-        query.is_empty() || name.to_lowercase().contains(&query)
+    /// Indices into `new_networks` currently visible under the filter, in
+    /// order. Reads the cache so render passes don't re-walk + re-lowercase
+    /// every SSID; the cache is refreshed by [`Self::recompute_visible_new`]
+    /// whenever the query or `new_networks` changes.
+    pub(crate) fn visible_new_indices(&self) -> &[usize] {
+        &self.visible_new
     }
 
-    /// Indices into `new_networks` currently visible under the filter, in order.
-    pub fn visible_new_indices(&self) -> Vec<usize> {
-        self.new_networks
-            .iter()
-            .enumerate()
-            .filter(|(_, (net, _))| self.new_filter_matches(&net.name))
-            .map(|(i, _)| i)
-            .collect()
+    /// Rebuilds the visible-new cache. The query is normalized once here,
+    /// not per row, so a typed-into filter doesn't pay N allocations per
+    /// render for N rows.
+    fn recompute_visible_new(&mut self) {
+        let query = self.filter_query.trim().to_lowercase();
+        self.visible_new.clear();
+        if query.is_empty() {
+            self.visible_new.extend(0..self.new_networks.len());
+            return;
+        }
+        for (idx, (net, _)) in self.new_networks.iter().enumerate() {
+            if net.name.to_lowercase().contains(&query) {
+                self.visible_new.push(idx);
+            }
+        }
     }
 
     /// Whether hidden-SSID rows are shown. They carry no SSID to match, so an
@@ -487,18 +522,18 @@ impl Station {
     }
 
     /// Total rows the New Networks table renders, for cursor clamping.
-    pub fn new_networks_total_rows(&self) -> usize {
+    pub(crate) fn new_networks_total_rows(&self) -> usize {
         let hidden = if self.hidden_rows_visible() {
             self.new_hidden_networks.len()
         } else {
             0
         };
-        self.visible_new_indices().len() + hidden
+        self.visible_new.len() + hidden
     }
 
     /// Resolves the highlighted New Networks row to real data, mapping through
     /// the filter so the cursor and the action target never diverge.
-    pub fn resolve_new_selection(&self) -> Option<NewNetworkSelection> {
+    pub(crate) fn resolve_new_selection(&self) -> Option<NewNetworkSelection> {
         let selected = self.new_networks_state.selected()?;
         let visible = self.visible_new_indices();
 
@@ -523,31 +558,35 @@ impl Station {
     }
 
     /// Begins typing an SSID filter on the New Networks list.
-    pub fn start_new_filter(&mut self) {
+    pub(crate) fn start_new_filter(&mut self) {
         self.filter_input = true;
     }
 
     /// Appends a character to the active filter and re-anchors the cursor.
-    pub fn push_new_filter(&mut self, c: char) {
+    pub(crate) fn push_new_filter(&mut self, c: char) {
         self.filter_query.push(c);
+        self.recompute_visible_new();
         self.reset_new_selection();
     }
 
     /// Deletes the last filter character and re-anchors the cursor.
-    pub fn pop_new_filter(&mut self) {
+    pub(crate) fn pop_new_filter(&mut self) {
         self.filter_query.pop();
+        self.recompute_visible_new();
         self.reset_new_selection();
     }
 
-    /// Stops editing but keeps the filter applied.
-    pub fn commit_new_filter(&mut self) {
+    /// Stops editing but keeps the filter applied. The visible set is unchanged
+    /// (query didn't change) so no recompute is needed.
+    pub(crate) fn commit_new_filter(&mut self) {
         self.filter_input = false;
     }
 
     /// Clears the filter entirely and exits editing.
-    pub fn clear_new_filter(&mut self) {
+    pub(crate) fn clear_new_filter(&mut self) {
         self.filter_query.clear();
         self.filter_input = false;
+        self.recompute_visible_new();
         self.reset_new_selection();
     }
 
@@ -894,8 +933,8 @@ impl Station {
         //
         let mut rows: Vec<Row> = self
             .visible_new_indices()
-            .into_iter()
-            .map(|idx| {
+            .iter()
+            .map(|&idx| {
                 let (net, signal) = &self.new_networks[idx];
                 let signal_percent = (*signal / 100).clamp(0, 100);
                 Row::new(vec![
@@ -1037,43 +1076,22 @@ impl Station {
                 vec![Line::from(spans)]
             }
             FocusedBlock::KnownNetworks => {
-                let single_line = Line::from(vec![
-                    Span::from("k,").bold(),
-                    Span::from("  Up"),
-                    Span::from(" | "),
-                    Span::from("j,").bold(),
-                    Span::from("  Down"),
-                    Span::from(" | "),
-                    Span::from("󱁐  or ↵ ").bold(),
-                    Span::from(" Dis/connect"),
-                    Span::from(" | "),
-                    Span::from(config.station.known_network.show_all.to_string()).bold(),
-                    Span::from(" Show All"),
-                    Span::from(" | "),
-                    Span::from(config.station.known_network.remove.to_string()).bold(),
-                    Span::from(" Remove"),
-                    Span::from(" | "),
-                    Span::from(config.station.known_network.toggle_autoconnect.to_string()).bold(),
-                    Span::from(" Autoconnect"),
-                    Span::from(" | "),
-                    Span::from(config.station.start_scanning.to_string()).bold(),
-                    Span::from(" Scan"),
-                    Span::from(" | "),
-                    Span::from(config.station.known_network.share.to_string()).bold(),
-                    Span::from(" Share"),
-                    Span::from(" | "),
-                    Span::from(config.station.known_network.speed_test.to_string()).bold(),
-                    Span::from(" Speed"),
-                    Span::from(" | "),
-                    Span::from(config.station.known_network.prefer.to_string()).bold(),
-                    Span::from(" Internet"),
-                    Span::from(" | "),
-                    Span::from("ctrl+r").bold(),
-                    Span::from(" Switch Mode"),
-                    Span::from(" | "),
-                    Span::from("⇄").bold(),
-                    Span::from(" Nav"),
-                ]);
+                let kn = &config.station.known_network;
+                let mut spans: Vec<Span<'static>> = Vec::new();
+                spans.extend(hint("k,", "  Up"));
+                spans.extend(hint("j,", "  Down"));
+                spans.extend(hint("󱁐  or ↵ ", " Dis/connect"));
+                spans.extend(hint(kn.show_all.to_string(), " Show All"));
+                spans.extend(hint(kn.remove.to_string(), " Remove"));
+                spans.extend(hint(kn.toggle_autoconnect.to_string(), " Autoconnect"));
+                spans.extend(hint(config.station.start_scanning.to_string(), " Scan"));
+                spans.extend(hint(kn.share.to_string(), " Share"));
+                spans.extend(hint(kn.speed_test.to_string(), " Speed"));
+                spans.extend(hint(kn.prefer.to_string(), " Internet"));
+                spans.extend(hint("ctrl+r", " Switch Mode"));
+                spans.extend(hint("⇄", " Nav"));
+                spans.pop(); // trailing " | " from the last hint
+                let single_line = Line::from(spans);
                 // The VPN hint is appended to the last line below, so account
                 // for it when deciding if the one-line layout fits.
                 let vpn_suffix_width =
@@ -1084,78 +1102,44 @@ impl Station {
                 if one_line_fits {
                     vec![single_line]
                 } else {
-                    vec![
-                        Line::from(vec![
-                            Span::from("󱁐  or ↵ ").bold(),
-                            Span::from(" Dis/connect"),
-                            Span::from(" | "),
-                            Span::from(config.station.known_network.show_all.to_string()).bold(),
-                            Span::from(" Show All"),
-                            Span::from(" | "),
-                            Span::from(config.station.known_network.remove.to_string()).bold(),
-                            Span::from(" Remove"),
-                            Span::from(" | "),
-                            Span::from(config.station.known_network.share.to_string()).bold(),
-                            Span::from(" Share"),
-                            Span::from(" | "),
-                            Span::from(config.station.start_scanning.to_string()).bold(),
-                            Span::from(" Scan"),
-                        ]),
-                        Line::from(vec![
-                            Span::from("k,").bold(),
-                            Span::from("  Up"),
-                            Span::from(" | "),
-                            Span::from("j,").bold(),
-                            Span::from("  Down"),
-                            Span::from(" | "),
-                            Span::from("⇄").bold(),
-                            Span::from(" Nav"),
-                            Span::from(" | "),
-                            Span::from("ctrl+r").bold(),
-                            Span::from(" Switch Mode"),
-                            Span::from(" | "),
-                            Span::from(config.station.known_network.toggle_autoconnect.to_string())
-                                .bold(),
-                            Span::from(" Autoconnect"),
-                            Span::from(" | "),
-                            Span::from(config.station.known_network.speed_test.to_string()).bold(),
-                            Span::from(" Speed"),
-                            Span::from(" | "),
-                            Span::from(config.station.known_network.prefer.to_string()).bold(),
-                            Span::from(" Internet"),
-                        ]),
-                    ]
+                    // Two-row fallback: first row = action keys, second =
+                    // navigation/mode/internet path. Split chosen so each row
+                    // groups related shortcuts.
+                    let mut top: Vec<Span<'static>> = Vec::new();
+                    top.extend(hint("󱁐  or ↵ ", " Dis/connect"));
+                    top.extend(hint(kn.show_all.to_string(), " Show All"));
+                    top.extend(hint(kn.remove.to_string(), " Remove"));
+                    top.extend(hint(kn.share.to_string(), " Share"));
+                    top.extend(hint(config.station.start_scanning.to_string(), " Scan"));
+                    top.pop();
+
+                    let mut bottom: Vec<Span<'static>> = Vec::new();
+                    bottom.extend(hint("k,", "  Up"));
+                    bottom.extend(hint("j,", "  Down"));
+                    bottom.extend(hint("⇄", " Nav"));
+                    bottom.extend(hint("ctrl+r", " Switch Mode"));
+                    bottom.extend(hint(kn.toggle_autoconnect.to_string(), " Autoconnect"));
+                    bottom.extend(hint(kn.speed_test.to_string(), " Speed"));
+                    bottom.extend(hint(kn.prefer.to_string(), " Internet"));
+                    bottom.pop();
+
+                    vec![Line::from(top), Line::from(bottom)]
                 }
             }
             FocusedBlock::NewNetworks => {
-                let single_line = Line::from(vec![
-                    Span::from("k,").bold(),
-                    Span::from("  Up"),
-                    Span::from(" | "),
-                    Span::from("j,").bold(),
-                    Span::from("  Down"),
-                    Span::from(" | "),
-                    Span::from("󱁐  or ↵ ").bold(),
-                    Span::from(" Connect"),
-                    Span::from(" | "),
-                    Span::from(config.station.new_network.connect_hidden.to_string()).bold(),
-                    Span::from(" Hidden"),
-                    Span::from(" | "),
-                    Span::from(config.station.new_network.show_all.to_string()).bold(),
-                    Span::from(" Show All"),
-                    Span::from(" | "),
-                    Span::from(config.station.new_network.filter.to_string()).bold(),
-                    Span::from(" Filter"),
-                    Span::from(" | "),
-                    Span::from(config.station.start_scanning.to_string()).bold(),
-                    Span::from(" Scan"),
-                    Span::from(" | "),
-                    Span::from("ctrl+r").bold(),
-                    Span::from(" Switch Mode"),
-                    Span::from(" | "),
-                    Span::from("⇄").bold(),
-                    Span::from(" Nav"),
-                ]);
+                let nn = &config.station.new_network;
+                let mut spans: Vec<Span<'static>> = Vec::new();
+                spans.extend(hint("k,", "  Up"));
+                spans.extend(hint("j,", "  Down"));
+                spans.extend(hint("󱁐  or ↵ ", " Connect"));
+                spans.extend(hint(nn.connect_hidden.to_string(), " Hidden"));
+                spans.extend(hint(nn.show_all.to_string(), " Show All"));
+                spans.extend(hint(nn.filter.to_string(), " Filter"));
+                spans.extend(hint(config.station.start_scanning.to_string(), " Scan"));
+                spans.extend(hint("ctrl+r", " Switch Mode"));
+                spans.extend(hint("⇄", " Nav"));
+                spans.pop();
+                let single_line = Line::from(spans);
                 let vpn_suffix_width =
                     Line::from(crate::device::vpn_hint_spans(config.vpn)).width() as u16;
                 let one_line_fits =
@@ -1164,35 +1148,21 @@ impl Station {
                 if one_line_fits {
                     vec![single_line]
                 } else {
-                    vec![
-                        Line::from(vec![
-                            Span::from("󱁐  or ↵ ").bold(),
-                            Span::from(" Connect"),
-                            Span::from(" | "),
-                            Span::from(config.station.new_network.connect_hidden.to_string())
-                                .bold(),
-                            Span::from(" Hidden"),
-                            Span::from(" | "),
-                            Span::from(config.station.new_network.filter.to_string()).bold(),
-                            Span::from(" Filter"),
-                            Span::from(" | "),
-                            Span::from(config.station.start_scanning.to_string()).bold(),
-                            Span::from(" Scan"),
-                        ]),
-                        Line::from(vec![
-                            Span::from("k,").bold(),
-                            Span::from("  Up"),
-                            Span::from(" | "),
-                            Span::from("j,").bold(),
-                            Span::from("  Down"),
-                            Span::from(" | "),
-                            Span::from("ctrl+r").bold(),
-                            Span::from(" Switch Mode"),
-                            Span::from(" | "),
-                            Span::from("⇄").bold(),
-                            Span::from(" Nav"),
-                        ]),
-                    ]
+                    let mut top: Vec<Span<'static>> = Vec::new();
+                    top.extend(hint("󱁐  or ↵ ", " Connect"));
+                    top.extend(hint(nn.connect_hidden.to_string(), " Hidden"));
+                    top.extend(hint(nn.filter.to_string(), " Filter"));
+                    top.extend(hint(config.station.start_scanning.to_string(), " Scan"));
+                    top.pop();
+
+                    let mut bottom: Vec<Span<'static>> = Vec::new();
+                    bottom.extend(hint("k,", "  Up"));
+                    bottom.extend(hint("j,", "  Down"));
+                    bottom.extend(hint("ctrl+r", " Switch Mode"));
+                    bottom.extend(hint("⇄", " Nav"));
+                    bottom.pop();
+
+                    vec![Line::from(top), Line::from(bottom)]
                 }
             }
             FocusedBlock::AdapterInfos => {
@@ -1235,16 +1205,12 @@ impl Station {
         // `v` lands in the query, not the modal.
         let typing_filter = focused_block == FocusedBlock::NewNetworks && self.filter_input;
         if typing_filter {
-            help_message = vec![Line::from(vec![
-                Span::from(" ↵ ").bold(),
-                Span::from(" Apply"),
-                Span::from(" | "),
-                Span::from("󱊷 ").bold(),
-                Span::from(" Cancel"),
-                Span::from(" | "),
-                Span::from("⌫ ").bold(),
-                Span::from(" Delete"),
-            ])];
+            let mut spans: Vec<Span<'static>> = Vec::new();
+            spans.extend(hint(" ↵ ", " Apply"));
+            spans.extend(hint("󱊷 ", " Cancel"));
+            spans.extend(hint("⌫ ", " Delete"));
+            spans.pop();
+            help_message = vec![Line::from(spans)];
         }
 
         // Advertise the global VPN shortcut from every list view by appending
