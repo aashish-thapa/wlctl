@@ -499,7 +499,7 @@ pub async fn handle_key_events(
                                 app.auth.hidden.reset();
                                 app.focused_block = FocusedBlock::NewNetworks;
                                 tokio::spawn(async move {
-                                    let _ = station_client
+                                    match station_client
                                         .add_and_activate_hidden_connection(
                                             &device_path,
                                             &ssid,
@@ -507,20 +507,25 @@ pub async fn handle_key_events(
                                             password.as_deref(),
                                         )
                                         .await
-                                        .map(|_| {
-                                            let _ = Notification::send(
-                                                format!("Connecting to hidden network: {}", ssid),
-                                                notification::NotificationLevel::Info,
-                                                &sender_clone,
-                                            );
-                                        })
-                                        .map_err(|e| {
+                                    {
+                                        Ok(active_path) => {
+                                            crate::mode::station::network::watch_activation(
+                                                station_client,
+                                                active_path.to_string(),
+                                                device_path,
+                                                ssid,
+                                                sender_clone,
+                                            )
+                                            .await;
+                                        }
+                                        Err(e) => {
                                             let _ = Notification::send(
                                                 format!("Failed to connect to {}: {}", ssid, e),
                                                 notification::NotificationLevel::Error,
                                                 &sender_clone,
                                             );
-                                        });
+                                        }
+                                    }
                                 });
                             }
                         }
