@@ -1250,7 +1250,7 @@ impl NMClient {
         active_path: &str,
         device_path: &str,
     ) -> Result<ActivationOutcome> {
-        use futures::StreamExt;
+        use futures::{FutureExt, StreamExt};
 
         const ACTIVATION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(45);
 
@@ -1272,6 +1272,26 @@ impl NMClient {
         let mut ac_signals = ac_proxy.receive_signal("StateChanged").await?;
         let mut dev_signals = dev_proxy.receive_signal("StateChanged").await?;
 
+        // Non-blocking drain of any device signals that are ready *right now*,
+        // updating `last` with the latest `Failed`-transition reason seen.
+        // Used at every "I am about to classify a failure" point so we never
+        // race past a queued device reason — `tokio::select!` picks ready
+        // branches at random, and the fast path below intentionally bypasses
+        // the loop entirely.
+        macro_rules! drain_dev_failure_reason {
+            ($last:expr) => {
+                while let Some(opt) = dev_signals.next().now_or_never() {
+                    let Some(msg) = opt else { break };
+                    if let Ok((new_state, _old_state, reason)) =
+                        msg.body().deserialize::<(u32, u32, u32)>()
+                        && DeviceState::from(new_state) == DeviceState::Failed
+                    {
+                        $last = Some(reason);
+                    }
+                }
+            };
+        }
+
         // Fast path: if the active connection is already terminal at
         // subscription time, decide now. We deliberately don't peek at the
         // device's current state — a fallback activation may have already
@@ -1280,7 +1300,15 @@ impl NMClient {
             match ActiveConnectionState::from(current) {
                 ActiveConnectionState::Activated => return Ok(ActivationOutcome::Activated),
                 ActiveConnectionState::Deactivated => {
-                    return Ok(ActivationOutcome::Failed(ActivationFailureReason::Other(0)));
+                    // The AC StateChanged signal may pre-date our subscription
+                    // (and so be lost), but device signals emitted between
+                    // subscription and now are still queued.
+                    let mut last: Option<u32> = None;
+                    drain_dev_failure_reason!(last);
+                    return Ok(ActivationOutcome::Failed(match last {
+                        Some(r) => ActivationFailureReason::from_nm_device_reason(r),
+                        None => ActivationFailureReason::Other(0),
+                    }));
                 }
                 _ => {}
             }
@@ -1306,6 +1334,11 @@ impl NMClient {
                                 return ActivationOutcome::Activated;
                             }
                             ActiveConnectionState::Deactivated => {
+                                // select! ordering is random: a Device.Failed
+                                // signal may be queued alongside this one.
+                                // Drain before classifying so we don't lose
+                                // the canonical wifi-layer reason.
+                                drain_dev_failure_reason!(last_device_failure_reason);
                                 let reason = match last_device_failure_reason {
                                     Some(r) => ActivationFailureReason::from_nm_device_reason(r),
                                     None => ActivationFailureReason::from_nm_active_reason(ac_reason),
