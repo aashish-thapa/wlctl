@@ -735,16 +735,41 @@ pub async fn handle_key_events(
 
                         // Typing an SSID filter captures keys before the global
                         // quit/scan/Tab shortcuts, so 'q', 's', etc. land in the
-                        // query instead of triggering actions.
+                        // query instead of triggering actions. Control-modified
+                        // chords (Ctrl+C, Ctrl+R, …) deliberately fall through
+                        // so universal escape hatches still work mid-typing.
                         if app.focused_block == FocusedBlock::NewNetworks && station.filter_input {
-                            match key_event.code {
-                                KeyCode::Esc => station.clear_new_filter(),
-                                KeyCode::Enter => station.commit_new_filter(),
-                                KeyCode::Backspace => station.pop_new_filter(),
-                                KeyCode::Char(c) => station.push_new_filter(c),
-                                _ => {}
+                            let is_chord = key_event.modifiers.intersects(
+                                KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER,
+                            );
+                            let consumed = match key_event.code {
+                                KeyCode::Esc => {
+                                    station.clear_new_filter();
+                                    true
+                                }
+                                KeyCode::Enter => {
+                                    station.commit_new_filter();
+                                    true
+                                }
+                                KeyCode::Backspace => {
+                                    station.pop_new_filter();
+                                    true
+                                }
+                                KeyCode::Char(c) if !is_chord => {
+                                    station.push_new_filter(c);
+                                    true
+                                }
+                                // Control chord on a Char: don't push into the
+                                // query — let it through to the global handler.
+                                KeyCode::Char(_) => false,
+                                // Anything else (Tab, arrows, …) stays trapped
+                                // by the modal input so focus and selection
+                                // don't shift mid-edit.
+                                _ => true,
+                            };
+                            if consumed {
+                                return Ok(());
                             }
-                            return Ok(());
                         }
 
                         match key_event.code {
