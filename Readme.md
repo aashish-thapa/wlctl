@@ -8,7 +8,11 @@
   [![License](https://img.shields.io/crates/l/wlctl.svg)](https://github.com/aashish-thapa/wlctl/blob/main/LICENSE)
 </div>
 
-![demo](https://github.com/user-attachments/assets/55c800ff-d0aa-4454-aa6b-3990833ce530)
+
+![demo](https://github.com/user-attachments/assets/7730eb31-b7a1-4fce-8882-d04a05cc666c)
+
+
+
 
 ## Why
 
