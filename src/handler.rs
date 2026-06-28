@@ -584,18 +584,37 @@ pub async fn handle_key_events(
                         KeyCode::Enter => {
                             // Get the password before submit() resets it
                             let password: String = app.auth.psk.passphrase.value().into();
-                            app.auth.psk.submit(&app.agent).await?;
 
-                            // Connect to the pending network with the password
-                            if let Some(net) = app.network_pending_auth.take() {
-                                let sender_clone = sender.clone();
-                                tokio::spawn(async move {
-                                    let _ = net.connect(sender_clone, Some(&password)).await;
-                                });
+                            // Validate against the network's security type
+                            // before handing the secret to NetworkManager: a
+                            // too-short WPA/WPA2-PSK passphrase fails here with a
+                            // clear message instead of as an opaque activation
+                            // error. SAE/WEP/Enterprise impose no such rule.
+                            let validation = app
+                                .network_pending_auth
+                                .as_ref()
+                                .map_or(Ok(()), |net| net.network_type.validate_psk(&password));
+
+                            if let Err(msg) = validation {
+                                Notification::send(
+                                    msg.to_string(),
+                                    notification::NotificationLevel::Error,
+                                    &sender,
+                                )?;
+                            } else {
+                                app.auth.psk.submit(&app.agent).await?;
+
+                                // Connect to the pending network with the password
+                                if let Some(net) = app.network_pending_auth.take() {
+                                    let sender_clone = sender.clone();
+                                    tokio::spawn(async move {
+                                        let _ = net.connect(sender_clone, Some(&password)).await;
+                                    });
+                                }
+
+                                app.network_name_requiring_auth = None;
+                                app.focused_block = FocusedBlock::NewNetworks;
                             }
-
-                            app.network_name_requiring_auth = None;
-                            app.focused_block = FocusedBlock::NewNetworks;
                         }
 
                         KeyCode::Esc => {

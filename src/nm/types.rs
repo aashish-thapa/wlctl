@@ -246,6 +246,9 @@ impl From<u32> for WifiMode {
     }
 }
 
+/// Minimum length of a WPA/WPA2-PSK passphrase, per the WPA spec (8–63 ASCII).
+pub const WPA_PSK_MIN_LEN: usize = 8;
+
 /// Security type for WiFi networks
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SecurityType {
@@ -297,6 +300,21 @@ impl SecurityType {
 
     pub fn is_enterprise(&self) -> bool {
         matches!(self, SecurityType::Enterprise)
+    }
+
+    /// Validate a PSK passphrase against this security type's length rules,
+    /// returning a user-facing message on failure.
+    ///
+    /// Only WPA/WPA2-PSK impose the WPA minimum ([`WPA_PSK_MIN_LEN`]). WPA3-SAE
+    /// has no minimum-length requirement, WEP uses its own 5/13-char key
+    /// lengths, and Enterprise authenticates with EAP credentials (not via the
+    /// PSK prompt), so all of those pass here and are left to NetworkManager's
+    /// own validation.
+    pub fn validate_psk(&self, psk: &str) -> Result<(), &'static str> {
+        if matches!(self, SecurityType::WPA | SecurityType::WPA2) && psk.len() < WPA_PSK_MIN_LEN {
+            return Err("Password must be at least 8 characters");
+        }
+        Ok(())
     }
 }
 
@@ -425,6 +443,12 @@ impl From<u32> for ActiveConnectionState {
 pub enum ActivationFailureReason {
     /// Wrong / missing passphrase (NM reasons `NoSecrets` and `LoginFailed`).
     BadSecrets,
+    /// NM reported the SSID could not be found (device reason `SsidNotFound`,
+    /// 53). This is genuinely ambiguous: NM emits it both when the network is
+    /// out of range / gone and, on many drivers, when a wrong PSK fails the
+    /// 4-way handshake and the AP deauthenticates. We surface it honestly
+    /// rather than guessing "wrong password".
+    SsidNotFound,
     /// Activation did not reach a terminal state within our wait window.
     Timeout,
     /// Any other terminal failure; carries the raw NM reason code so callers
@@ -457,8 +481,12 @@ impl ActivationFailureReason {
         // 8  = NM_DEVICE_STATE_REASON_SUPPLICANT_DISCONNECT
         // 9  = NM_DEVICE_STATE_REASON_SUPPLICANT_CONFIG_FAILED
         // 10 = NM_DEVICE_STATE_REASON_SUPPLICANT_FAILED
+        // 53 = NM_DEVICE_STATE_REASON_SSID_NOT_FOUND (also a common
+        //      wrong-PSK symptom — see `SsidNotFound`, kept distinct so the
+        //      message stays truthful rather than asserting "wrong password").
         match reason {
             7..=10 => Self::BadSecrets,
+            53 => Self::SsidNotFound,
             other => Self::Other(other),
         }
     }
@@ -729,6 +757,12 @@ mod tests {
                 code
             );
         }
+        // 53 = SSID_NOT_FOUND: kept distinct so the message stays honest
+        // rather than asserting a wrong password.
+        assert_eq!(
+            ActivationFailureReason::from_nm_device_reason(53),
+            ActivationFailureReason::SsidNotFound
+        );
         assert_eq!(
             ActivationFailureReason::from_nm_device_reason(0),
             ActivationFailureReason::Other(0)
@@ -737,5 +771,27 @@ mod tests {
             ActivationFailureReason::from_nm_device_reason(6),
             ActivationFailureReason::Other(6)
         );
+    }
+
+    #[test]
+    fn test_validate_psk_enforces_min_only_for_wpa_psk() {
+        // WPA/WPA2-PSK reject short passphrases but accept >= 8.
+        for ty in [SecurityType::WPA, SecurityType::WPA2] {
+            assert!(ty.validate_psk("short").is_err(), "{:?} short", ty);
+            assert!(ty.validate_psk("12345678").is_ok(), "{:?} 8 chars", ty);
+        }
+        // WPA3-SAE has no minimum; WEP/Enterprise/Open are not PSK prompts.
+        for ty in [
+            SecurityType::WPA3,
+            SecurityType::WEP,
+            SecurityType::Enterprise,
+            SecurityType::Open,
+        ] {
+            assert!(
+                ty.validate_psk("short").is_ok(),
+                "{:?} should not enforce the 8-char PSK rule",
+                ty
+            );
+        }
     }
 }

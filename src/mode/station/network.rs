@@ -58,6 +58,13 @@ pub async fn watch_activation(
             format!("Wrong password for {}", ssid),
             NotificationLevel::Error,
         ),
+        ActivationOutcome::Failed(ActivationFailureReason::SsidNotFound) => (
+            format!(
+                "Could not connect to {} — wrong password or network out of range",
+                ssid
+            ),
+            NotificationLevel::Error,
+        ),
         ActivationOutcome::Failed(ActivationFailureReason::Timeout) => (
             format!("Connection to {} timed out", ssid),
             NotificationLevel::Error,

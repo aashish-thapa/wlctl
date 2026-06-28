@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::sync::{Arc, atomic::AtomicBool};
 
-use crate::nm::NMClient;
+use crate::nm::{NMClient, SecurityType};
 use tokio::sync::mpsc::UnboundedSender;
 
 use ratatui::{
@@ -307,12 +307,10 @@ impl AccessPoint {
             return Ok(());
         }
 
-        if psk.len() < 8 {
-            Notification::send(
-                "Password must be at least 8 characters".to_string(),
-                NotificationLevel::Error,
-                &sender,
-            )?;
+        // A hotspot is always WPA2-PSK, so it is bound by the WPA passphrase
+        // length rule — validate through the shared policy.
+        if let Err(msg) = SecurityType::WPA2.validate_psk(&psk) {
+            Notification::send(msg.to_string(), NotificationLevel::Error, &sender)?;
             return Ok(());
         }
 
