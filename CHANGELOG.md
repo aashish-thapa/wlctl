@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.9] - 2026-06-28
+
 ### Added
 - Show which link carries internet traffic: when WiFi and Ethernet are both up,
   the active default-route link is highlighted in green, with a box-footer
@@ -15,6 +17,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the default route while keeping the other link up
 - Filter the New Networks scan list by SSID with `/`
 - Device box footer shows the active adapter's LAN IP (handy for SSH)
+
+### Fixed
+- Surface WiFi connect outcomes as notifications: report success, wrong
+  password, SSID-not-found (out of range), and timeouts instead of failing
+  silently
+- Validate WPA/WPA2 passphrase length (8+ characters) before connecting,
+  matching the existing hotspot check
+- Esc now clears an applied SSID filter on the New Networks list
+- Show Ethernet status when the WiFi radio is off, and the WiFi connected
+  indicator when Ethernet is also active
 
 ## [0.1.8] - 2026-06-16
 
