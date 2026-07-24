@@ -1,4 +1,8 @@
 use anyhow::Result;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 use std::time::Duration;
 
 use crate::nm::Mode;
@@ -39,6 +43,7 @@ pub struct EventHandler {
     pub sender: mpsc::UnboundedSender<Event>,
     pub receiver: mpsc::UnboundedReceiver<Event>,
     handler: tokio::task::JoinHandle<()>,
+    tick_pending: Arc<AtomicBool>,
 }
 
 impl EventHandler {
@@ -46,6 +51,8 @@ impl EventHandler {
         let tick_rate = Duration::from_millis(tick_rate);
         let (sender, receiver) = mpsc::unbounded_channel();
         let sender_cloned = sender.clone();
+        let tick_pending = Arc::new(AtomicBool::new(false));
+        let tick_pending_cloned = tick_pending.clone();
         let handler = tokio::spawn(async move {
             let mut reader = crossterm::event::EventStream::new();
             let mut tick = tokio::time::interval(tick_rate);
@@ -57,7 +64,14 @@ impl EventHandler {
                     break;
                   }
                   _ = tick_delay => {
-                    sender_cloned.send(Event::Tick).unwrap();
+                    // A refresh can take longer than the timer interval. Keep
+                    // at most one timer tick queued so the UI does not spend
+                    // its time catching up with stale refresh requests.
+                    if !tick_pending_cloned.swap(true, Ordering::AcqRel)
+                        && sender_cloned.send(Event::Tick).is_err()
+                    {
+                        break;
+                    }
                   }
                   Some(Ok(evt)) = crossterm_event => {
                     match evt {
@@ -84,6 +98,7 @@ impl EventHandler {
             sender,
             receiver,
             handler,
+            tick_pending,
         }
     }
 
@@ -92,5 +107,11 @@ impl EventHandler {
             .recv()
             .await
             .ok_or(std::io::Error::other("This is an IO error").into())
+    }
+
+    /// Allow the timer to enqueue another refresh after the current one has
+    /// fully completed.
+    pub fn mark_tick_handled(&self) {
+        self.tick_pending.store(false, Ordering::Release);
     }
 }
