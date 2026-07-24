@@ -144,15 +144,22 @@ impl Station {
             .await
             .unwrap_or(false);
 
-        let connected_ssid = client.get_connected_ssid(&device_path).await?;
+        let active_ap_path = client.get_active_access_point(&device_path).await?;
 
         // Request a fresh scan so we get up-to-date AP data.
         // This is non-blocking; NM populates APs asynchronously and
         // the periodic refresh() tick will pick them up.
         let _ = client.request_scan(&device_path).await;
 
-        let visible_networks = client.get_visible_networks(&device_path).await?;
-        let saved_connections = client.get_wifi_connections().await?;
+        let managed = client.get_managed_objects().await?;
+        let visible_networks = client
+            .get_visible_networks_from_managed(&device_path, &managed)
+            .await?;
+        let saved_connections = client.get_wifi_connections_from_managed(&managed).await?;
+        let active_ap = active_ap_path
+            .as_ref()
+            .and_then(|path| client.get_access_point_info_from_managed(path, &managed));
+        let connected_ssid = active_ap.as_ref().map(|ap| ap.ssid.clone());
 
         let (new_networks, known_networks, connected_network) = Self::categorize_networks(
             &client,
@@ -165,8 +172,10 @@ impl Station {
         let unavailable_known_networks =
             Self::find_unavailable_networks(&client, &known_networks, saved_connections);
 
-        let diagnostic =
-            Self::fetch_diagnostic(&client, &device_path, connected_network.is_some()).await?;
+        let diagnostic = connected_network
+            .as_ref()
+            .and(active_ap.as_ref())
+            .map(Self::diagnostic_from_access_point);
 
         let ipv4 = Self::fetch_device_ipv4(&client, &device_path).await;
 
@@ -213,15 +222,24 @@ impl Station {
         let device_state = self.client.get_device_state(&self.device_path).await?;
         self.state = StationState::from(device_state);
 
-        self.is_ethernet_connected = self
+        let active_ap_path = self
             .client
-            .has_active_ethernet_connection()
-            .await
-            .unwrap_or(false);
-
-        let connected_ssid = self.client.get_connected_ssid(&self.device_path).await?;
-        let visible_networks = self.client.get_visible_networks(&self.device_path).await?;
-        let saved_connections = self.client.get_wifi_connections().await?;
+            .get_active_access_point(&self.device_path)
+            .await?;
+        let managed = self.client.get_managed_objects().await?;
+        let visible_networks = self
+            .client
+            .get_visible_networks_from_managed(&self.device_path, &managed)
+            .await?;
+        let saved_connections = self
+            .client
+            .get_wifi_connections_from_managed(&managed)
+            .await?;
+        let active_ap = active_ap_path.as_ref().and_then(|path| {
+            self.client
+                .get_access_point_info_from_managed(path, &managed)
+        });
+        let connected_ssid = active_ap.as_ref().map(|ap| ap.ssid.clone());
 
         let (new_networks, known_networks, connected_network) = Self::categorize_networks(
             &self.client,
@@ -245,12 +263,11 @@ impl Station {
             Self::find_unavailable_networks(&self.client, &self.known_networks, saved_connections);
 
         self.connected_network = connected_network;
-        self.diagnostic = Self::fetch_diagnostic(
-            &self.client,
-            &self.device_path,
-            self.connected_network.is_some(),
-        )
-        .await?;
+        self.diagnostic = self
+            .connected_network
+            .as_ref()
+            .and(active_ap.as_ref())
+            .map(Self::diagnostic_from_access_point);
 
         self.ipv4 = Self::fetch_device_ipv4(&self.client, &self.device_path).await;
 
@@ -319,26 +336,15 @@ impl Station {
             .collect()
     }
 
-    /// Fetch diagnostic info for the active access point.
-    async fn fetch_diagnostic(
-        client: &NMClient,
-        device_path: &str,
-        is_connected: bool,
-    ) -> Result<Option<DiagnosticInfo>> {
-        if !is_connected {
-            return Ok(None);
+    /// Build diagnostic data from the active AP already present in the shared
+    /// ObjectManager snapshot.
+    fn diagnostic_from_access_point(ap_info: &AccessPointInfo) -> DiagnosticInfo {
+        DiagnosticInfo {
+            frequency: Some(ap_info.frequency),
+            signal_strength: Some(ap_info.strength as i32),
+            security: Some(ap_info.security.to_string()),
+            ..Default::default()
         }
-        if let Some(ap_path) = client.get_active_access_point(device_path).await?
-            && let Ok(ap_info) = client.get_access_point_info(ap_path.as_str()).await
-        {
-            return Ok(Some(DiagnosticInfo {
-                frequency: Some(ap_info.frequency),
-                signal_strength: Some(ap_info.strength as i32),
-                security: Some(ap_info.security.to_string()),
-                ..Default::default()
-            }));
-        }
-        Ok(None)
     }
 
     /// Create a TableState with the first item selected if the list is non-empty.
