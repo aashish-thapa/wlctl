@@ -505,6 +505,7 @@ pub struct ActiveConnectionInfo {
     pub path: String,
     pub id: String,
     pub uuid: String,
+    pub connection_type: String,
     pub state: ActiveConnectionState,
     pub connection_path: String,
     pub devices: Vec<String>,
