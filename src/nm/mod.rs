@@ -684,13 +684,7 @@ impl NMClient {
             if info.state != ActiveConnectionState::Activated {
                 continue;
             }
-            let Ok(settings) = self.get_connection_settings(&info.connection_path).await else {
-                continue;
-            };
-            let is_vpn = settings
-                .get("connection")
-                .and_then(|c| setting_str(c, "type"))
-                .is_some_and(|t| t == "vpn" || t == "wireguard");
+            let is_vpn = info.connection_type == "vpn" || info.connection_type == "wireguard";
             if is_vpn {
                 names.push(info.id);
             }
@@ -1126,17 +1120,7 @@ impl NMClient {
                 continue;
             }
 
-            // 802-3-ethernet is the NetworkManager type for wired connections.
-            let Ok(settings) = self.get_connection_settings(&info.connection_path).await else {
-                continue;
-            };
-            let is_ethernet = settings
-                .get("connection")
-                .and_then(|c| c.get("type"))
-                .and_then(|t| t.try_clone().ok())
-                .and_then(|t| String::try_from(t).ok())
-                .is_some_and(|t| t == "802-3-ethernet");
-            if !is_ethernet {
+            if info.connection_type != "802-3-ethernet" {
                 continue;
             }
 
@@ -1183,14 +1167,10 @@ impl NMClient {
         }
 
         let info = self.get_active_connection_info(path.as_str()).await?;
-        let nm_type: String = proxy
-            .get_property("PrimaryConnectionType")
-            .await
-            .unwrap_or_default();
 
         Ok(Some(PrimaryLink {
             id: info.id,
-            kind: LinkKind::from_nm_type(&nm_type),
+            kind: LinkKind::from_nm_type(&info.connection_type),
         }))
     }
 
@@ -1208,16 +1188,7 @@ impl NMClient {
                 continue;
             }
 
-            let Ok(settings) = self.get_connection_settings(&info.connection_path).await else {
-                continue;
-            };
-            let nm_type = settings
-                .get("connection")
-                .and_then(|c| c.get("type"))
-                .and_then(|t| t.try_clone().ok())
-                .and_then(|t| String::try_from(t).ok())
-                .unwrap_or_default();
-            let kind = LinkKind::from_nm_type(&nm_type);
+            let kind = LinkKind::from_nm_type(&info.connection_type);
             if kind == LinkKind::Other {
                 continue;
             }
@@ -1312,20 +1283,52 @@ impl NMClient {
             &self.connection,
             NM_BUS_NAME,
             active_conn_path,
-            "org.freedesktop.NetworkManager.Connection.Active",
+            "org.freedesktop.DBus.Properties",
         )
         .await?;
 
-        let id: String = proxy.get_property("Id").await?;
-        let uuid: String = proxy.get_property("Uuid").await?;
-        let state: u32 = proxy.get_property("State").await?;
-        let connection_path: OwnedObjectPath = proxy.get_property("Connection").await?;
-        let devices: Vec<OwnedObjectPath> = proxy.get_property("Devices").await?;
+        let props: HashMap<String, OwnedValue> = proxy
+            .call(
+                "GetAll",
+                &("org.freedesktop.NetworkManager.Connection.Active",),
+            )
+            .await?;
+        let id: String = props
+            .get("Id")
+            .context("Active connection has no Id")?
+            .try_clone()?
+            .try_into()?;
+        let uuid: String = props
+            .get("Uuid")
+            .context("Active connection has no Uuid")?
+            .try_clone()?
+            .try_into()?;
+        let connection_type: String = props
+            .get("Type")
+            .context("Active connection has no Type")?
+            .try_clone()?
+            .try_into()?;
+        let state: u32 = props
+            .get("State")
+            .context("Active connection has no State")?
+            .try_clone()?
+            .try_into()?;
+        let connection_path: OwnedObjectPath = props
+            .get("Connection")
+            .context("Active connection has no Connection")?
+            .try_clone()?
+            .try_into()?;
+        let devices: Vec<OwnedObjectPath> = props
+            .get("Devices")
+            .context("Active connection has no Devices")?
+            .try_clone()?
+            .try_into()?;
 
         Ok(ActiveConnectionInfo {
             path: active_conn_path.to_string(),
             id,
             uuid,
+            connection_type,
             state: ActiveConnectionState::from(state),
             connection_path: connection_path.to_string(),
             devices: devices.iter().map(|p| p.to_string()).collect(),
