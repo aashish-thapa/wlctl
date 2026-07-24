@@ -4,6 +4,7 @@
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::net::IpAddr;
+use std::sync::{Arc, Mutex};
 use zbus::zvariant::{ObjectPath, OwnedObjectPath, OwnedValue, Value};
 use zbus::{Connection, Proxy};
 
@@ -72,10 +73,21 @@ fn ipv6_dns_bytes(dns: &[IpAddr]) -> Vec<Vec<u8>> {
         .collect()
 }
 
+/// Saved wifi connections plus the `(path, VersionId)` fingerprint they were
+/// built from. When the fingerprint is unchanged, the list is reused instead of
+/// re-reading every connection's settings.
+#[derive(Debug)]
+struct WifiConnCache {
+    fingerprint: Vec<(String, u64)>,
+    connections: Vec<ConnectionInfo>,
+}
+
 /// Main NetworkManager client
 #[derive(Clone, Debug)]
 pub struct NMClient {
     connection: Connection,
+    // Shared across clones so the cache is process-wide.
+    wifi_conn_cache: Arc<Mutex<Option<WifiConnCache>>>,
 }
 
 impl NMClient {
@@ -99,7 +111,10 @@ impl NMClient {
             "NetworkManager is not running or not accessible. Please ensure NetworkManager service is active.",
         )?;
 
-        Ok(Self { connection })
+        Ok(Self {
+            connection,
+            wifi_conn_cache: Arc::new(Mutex::new(None)),
+        })
     }
 
     /// Get the D-Bus connection
@@ -482,6 +497,43 @@ impl NMClient {
     /// Get WiFi connection profiles
     #[allow(clippy::collapsible_if, clippy::map_flatten)]
     pub async fn get_wifi_connections(&self) -> Result<Vec<ConnectionInfo>> {
+        let managed = self.get_managed_objects().await?;
+        self.get_wifi_connections_from_managed(&managed).await
+    }
+
+    /// Get WiFi connection profiles using an existing ObjectManager snapshot.
+    #[allow(clippy::collapsible_if, clippy::map_flatten)]
+    pub async fn get_wifi_connections_from_managed(
+        &self,
+        managed: &ManagedObjects,
+    ) -> Result<Vec<ConnectionInfo>> {
+        // Reading GetSettings for every saved connection on each refresh is the
+        // dominant per-tick cost when many profiles exist. Saved connections
+        // change rarely, so fingerprint them by (path, VersionId) -- both come
+        // free from the ObjectManager payload -- and rebuild only on change.
+        const CONN_IFACE: &str = "org.freedesktop.NetworkManager.Settings.Connection";
+        let mut fingerprint: Vec<(String, u64)> = managed
+            .iter()
+            .filter_map(|(path, ifaces)| {
+                let props = ifaces.get(CONN_IFACE)?;
+                let version = props
+                    .get("VersionId")
+                    .and_then(|v| v.try_clone().ok())
+                    .and_then(|v| u64::try_from(v).ok())
+                    .unwrap_or(0);
+                Some((path.as_str().to_string(), version))
+            })
+            .collect();
+        fingerprint.sort();
+
+        // Cache hit: nothing added, removed, or edited since last time.
+        if let Ok(guard) = self.wifi_conn_cache.lock()
+            && let Some(cache) = guard.as_ref()
+            && cache.fingerprint == fingerprint
+        {
+            return Ok(cache.connections.clone());
+        }
+
         let connections = self.get_connections().await?;
         let mut wifi_connections = Vec::new();
 
@@ -575,6 +627,13 @@ impl NMClient {
 
         // Sort by timestamp (most recent first)
         wifi_connections.sort_by_key(|c| std::cmp::Reverse(c.timestamp));
+
+        if let Ok(mut guard) = self.wifi_conn_cache.lock() {
+            *guard = Some(WifiConnCache {
+                fingerprint,
+                connections: wifi_connections.clone(),
+            });
+        }
 
         Ok(wifi_connections)
     }
