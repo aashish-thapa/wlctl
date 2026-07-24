@@ -85,7 +85,9 @@ async fn main() -> Result<()> {
 
         match tui.events.next().await? {
             Event::Tick => {
-                if let Err(e) = app.tick().await {
+                let result = app.tick().await;
+                tui.events.mark_tick_handled();
+                if let Err(e) = result {
                     exit_error_message = Some(e);
                     break;
                 }

@@ -381,7 +381,7 @@ Error: {}",
         }
 
         self.device.refresh().await?;
-        self.adapter.refresh().await?;
+        self.adapter.is_powered = self.device.is_powered;
 
         // Keep the VPN modal's on/off state live while it's open.
         if let Some(modal) = &mut self.vpn {
@@ -397,6 +397,9 @@ Error: {}",
         // Refresh wired link status. Best-effort, and intentionally independent
         // of the WiFi power state so it stays visible when the radio is off.
         if let Ok(eth) = self.client.active_ethernet().await {
+            if let Some(station) = &mut self.device.station {
+                station.is_ethernet_connected = eth.is_some();
+            }
             self.ethernet = eth;
         }
 
