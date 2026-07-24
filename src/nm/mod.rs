@@ -13,6 +13,8 @@ pub mod wifi;
 
 pub use types::*;
 
+pub type ManagedObjects = HashMap<OwnedObjectPath, HashMap<String, HashMap<String, OwnedValue>>>;
+
 const NM_BUS_NAME: &str = "org.freedesktop.NetworkManager";
 const NM_PATH: &str = "/org/freedesktop/NetworkManager";
 
@@ -338,37 +340,81 @@ impl NMClient {
         }
     }
 
-    /// Get access point details
-    pub async fn get_access_point_info(&self, ap_path: &str) -> Result<AccessPointInfo> {
-        let proxy = Proxy::new(
-            &self.connection,
-            NM_BUS_NAME,
-            ap_path,
-            "org.freedesktop.NetworkManager.AccessPoint",
-        )
-        .await?;
+    /// Build an `AccessPointInfo` from an AccessPoint interface's property map,
+    /// as returned by either `Properties.GetAll` or `ObjectManager`.
+    fn access_point_info_from_props(
+        ap_path: &str,
+        props: &HashMap<String, OwnedValue>,
+    ) -> AccessPointInfo {
+        let u32_of = |key: &str| -> u32 {
+            props
+                .get(key)
+                .and_then(|v| v.try_clone().ok())
+                .and_then(|v| u32::try_from(v).ok())
+                .unwrap_or(0)
+        };
 
-        let ssid_bytes: Vec<u8> = proxy.get_property("Ssid").await?;
+        let ssid_bytes: Vec<u8> = props
+            .get("Ssid")
+            .and_then(|v| v.try_clone().ok())
+            .and_then(|v| Vec::<u8>::try_from(v).ok())
+            .unwrap_or_default();
         let ssid = String::from_utf8_lossy(&ssid_bytes).to_string();
-        let strength: u8 = proxy.get_property("Strength").await?;
-        let frequency: u32 = proxy.get_property("Frequency").await?;
-        let hw_address: String = proxy.get_property("HwAddress").await?;
-        let flags: u32 = proxy.get_property("Flags").await?;
-        let wpa_flags: u32 = proxy.get_property("WpaFlags").await?;
-        let rsn_flags: u32 = proxy.get_property("RsnFlags").await?;
-        let mode: u32 = proxy.get_property("Mode").await?;
+        let strength: u8 = props
+            .get("Strength")
+            .and_then(|v| v.try_clone().ok())
+            .and_then(|v| u8::try_from(v).ok())
+            .unwrap_or(0);
+        let hw_address: String = props
+            .get("HwAddress")
+            .and_then(|v| v.try_clone().ok())
+            .and_then(|v| String::try_from(v).ok())
+            .unwrap_or_default();
+        let flags = u32_of("Flags");
+        let wpa_flags = u32_of("WpaFlags");
+        let rsn_flags = u32_of("RsnFlags");
 
-        let security = SecurityType::from_flags(flags, wpa_flags, rsn_flags);
-
-        Ok(AccessPointInfo {
+        AccessPointInfo {
             path: ap_path.to_string(),
             ssid,
             strength,
-            frequency,
+            frequency: u32_of("Frequency"),
             hw_address,
-            security,
-            mode: WifiMode::from(mode),
-        })
+            security: SecurityType::from_flags(flags, wpa_flags, rsn_flags),
+            mode: WifiMode::from(u32_of("Mode")),
+        }
+    }
+
+    /// Get access point details via a single `Properties.GetAll`.
+    pub async fn get_access_point_info(&self, ap_path: &str) -> Result<AccessPointInfo> {
+        let props = Proxy::new(
+            &self.connection,
+            NM_BUS_NAME,
+            ap_path,
+            "org.freedesktop.DBus.Properties",
+        )
+        .await?;
+
+        let all: HashMap<String, OwnedValue> = props
+            .call("GetAll", &("org.freedesktop.NetworkManager.AccessPoint",))
+            .await?;
+
+        Ok(Self::access_point_info_from_props(ap_path, &all))
+    }
+
+    /// Fetch every managed NM object with all its interface properties in one
+    /// ObjectManager round-trip. Used to enumerate all visible APs at once
+    /// instead of a `GetAll` per AP.
+    pub async fn get_managed_objects(&self) -> Result<ManagedObjects> {
+        let proxy = Proxy::new(
+            &self.connection,
+            NM_BUS_NAME,
+            "/org/freedesktop",
+            "org.freedesktop.DBus.ObjectManager",
+        )
+        .await?;
+
+        Ok(proxy.call("GetManagedObjects", &()).await?)
     }
 
     /// Get all saved connections
