@@ -8,7 +8,8 @@ pub mod speed_test;
 use std::sync::Arc;
 
 use crate::nm::{
-    AccessPointInfo, ConnectionInfo, DiagnosticInfo, LinkKind, NMClient, PrimaryLink, StationState,
+    AccessPointInfo, ConnectionInfo, DiagnosticInfo, LinkKind, NMClient, NmSnapshot, PrimaryLink,
+    StationState,
 };
 use ratatui::{
     Frame,
@@ -139,26 +140,19 @@ impl Station {
         let device_state = client.get_device_state(&device_path).await?;
         let state = StationState::from(device_state);
 
-        let is_ethernet_connected = client
-            .has_active_ethernet_connection()
-            .await
-            .unwrap_or(false);
-
-        let active_ap_path = client.get_active_access_point(&device_path).await?;
-
         // Request a fresh scan so we get up-to-date AP data.
         // This is non-blocking; NM populates APs asynchronously and
         // the periodic refresh() tick will pick them up.
         let _ = client.request_scan(&device_path).await;
 
-        let managed = client.get_managed_objects().await?;
-        let visible_networks = client
-            .get_visible_networks_from_managed(&device_path, &managed)
-            .await?;
-        let saved_connections = client.get_wifi_connections_from_managed(&managed).await?;
-        let active_ap = active_ap_path
-            .as_ref()
-            .and_then(|path| client.get_access_point_info_from_managed(path, &managed));
+        let snapshot = NmSnapshot::fetch(&client).await?;
+        let is_ethernet_connected = client
+            .has_active_ethernet_connection(&snapshot)
+            .await
+            .unwrap_or(false);
+        let visible_networks = snapshot.visible_networks(&device_path);
+        let saved_connections = client.wifi_connections(&snapshot).await?;
+        let active_ap = snapshot.active_access_point(&device_path);
         let connected_ssid = active_ap.as_ref().map(|ap| ap.ssid.clone());
 
         let (new_networks, known_networks, connected_network) = Self::categorize_networks(
@@ -170,11 +164,11 @@ impl Station {
         );
 
         let unavailable_known_networks =
-            Self::find_unavailable_networks(&client, &known_networks, saved_connections);
+            Self::find_unavailable_networks(&client, &known_networks, &saved_connections);
 
-        let diagnostic = connected_network
+        let diagnostic = active_ap
             .as_ref()
-            .and(active_ap.as_ref())
+            .filter(|_| connected_network.is_some())
             .map(Self::diagnostic_from_access_point);
 
         let ipv4 = Self::fetch_device_ipv4(&client, &device_path).await;
@@ -218,27 +212,14 @@ impl Station {
             .and_then(|ip| ip.addresses.into_iter().next().map(|(addr, _)| addr))
     }
 
-    pub async fn refresh(&mut self) -> Result<()> {
-        let device_state = self.client.get_device_state(&self.device_path).await?;
-        self.state = StationState::from(device_state);
+    pub async fn refresh(&mut self, snapshot: &NmSnapshot) -> Result<()> {
+        if let Some(device_state) = snapshot.device_state(&self.device_path) {
+            self.state = StationState::from(device_state);
+        }
 
-        let active_ap_path = self
-            .client
-            .get_active_access_point(&self.device_path)
-            .await?;
-        let managed = self.client.get_managed_objects().await?;
-        let visible_networks = self
-            .client
-            .get_visible_networks_from_managed(&self.device_path, &managed)
-            .await?;
-        let saved_connections = self
-            .client
-            .get_wifi_connections_from_managed(&managed)
-            .await?;
-        let active_ap = active_ap_path.as_ref().and_then(|path| {
-            self.client
-                .get_access_point_info_from_managed(path, &managed)
-        });
+        let visible_networks = snapshot.visible_networks(&self.device_path);
+        let saved_connections = self.client.wifi_connections(snapshot).await?;
+        let active_ap = snapshot.active_access_point(&self.device_path);
         let connected_ssid = active_ap.as_ref().map(|ap| ap.ssid.clone());
 
         let (new_networks, known_networks, connected_network) = Self::categorize_networks(
@@ -260,13 +241,12 @@ impl Station {
         self.update_known_network_list(&known_networks);
 
         self.unavailable_known_networks =
-            Self::find_unavailable_networks(&self.client, &self.known_networks, saved_connections);
+            Self::find_unavailable_networks(&self.client, &self.known_networks, &saved_connections);
 
         self.connected_network = connected_network;
-        self.diagnostic = self
-            .connected_network
+        self.diagnostic = active_ap
             .as_ref()
-            .and(active_ap.as_ref())
+            .filter(|_| self.connected_network.is_some())
             .map(Self::diagnostic_from_access_point);
 
         self.ipv4 = Self::fetch_device_ipv4(&self.client, &self.device_path).await;
@@ -322,7 +302,7 @@ impl Station {
     fn find_unavailable_networks(
         client: &Arc<NMClient>,
         known_networks: &[(Network, i16)],
-        saved_connections: Vec<ConnectionInfo>,
+        saved_connections: &[ConnectionInfo],
     ) -> Vec<KnownNetwork> {
         let visible_ssids: Vec<&str> = known_networks
             .iter()
@@ -330,9 +310,9 @@ impl Station {
             .collect();
 
         saved_connections
-            .into_iter()
+            .iter()
             .filter(|conn| !visible_ssids.contains(&conn.ssid.as_str()))
-            .map(|conn| KnownNetwork::from_connection_info(client.clone(), conn))
+            .map(|conn| KnownNetwork::from_connection_info(client.clone(), conn.clone()))
             .collect()
     }
 

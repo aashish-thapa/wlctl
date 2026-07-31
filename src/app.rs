@@ -4,7 +4,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc::UnboundedSender;
 use zbus::zvariant::OwnedObjectPath;
 
-use crate::nm::{EthernetInfo, Mode, NMClient, PrimaryLink};
+use crate::nm::{EthernetInfo, Mode, NMClient, NmSnapshot, PrimaryLink};
 
 use crate::{
     adapter::Adapter, agent::AuthAgent, config::Config, device::Device, doctor::DoctorModal,
@@ -48,18 +48,16 @@ pub struct AdapterSummary {
 }
 
 impl AdapterSummary {
-    async fn fetch(client: &NMClient, path: OwnedObjectPath) -> Result<Self> {
-        let name = client.get_device_interface(path.as_str()).await?;
-        Ok(Self { path, name })
-    }
-
-    async fn fetch_all(client: &NMClient) -> Result<Vec<Self>> {
-        let paths = client.get_wifi_devices().await?;
-        let mut out = Vec::with_capacity(paths.len());
-        for p in paths {
-            out.push(Self::fetch(client, p).await?);
-        }
-        Ok(out)
+    /// Every WiFi adapter described by `snapshot`, in NetworkManager's order.
+    fn all(snapshot: &NmSnapshot) -> Vec<Self> {
+        snapshot
+            .wifi_devices()
+            .into_iter()
+            .map(|path| {
+                let name = snapshot.device_interface(path.as_str()).unwrap_or_default();
+                Self { path, name }
+            })
+            .collect()
     }
 }
 
@@ -192,11 +190,13 @@ Error: {}",
             }
         };
 
-        let adapters = AdapterSummary::fetch_all(&client).await?;
+        // One snapshot answers the adapter list and the wired-link state, so
+        // the station is built already knowing both.
+        let snapshot = NmSnapshot::fetch(&client).await?;
+        let adapters = AdapterSummary::all(&snapshot);
         if adapters.is_empty() {
             return Err(anyhow!("No WiFi device found"));
         }
-
         let active_index = 0;
         let mut device = Device::new(client.clone(), adapters[active_index].path.clone()).await?;
 
@@ -339,10 +339,15 @@ Error: {}",
         self.notifications.retain(|n| n.ttl > 0);
         self.notifications.iter_mut().for_each(|n| n.ttl -= 1);
 
+        // One read of NetworkManager's object graph serves every refresh below,
+        // so they all describe the same instant and cost one round trip between
+        // them instead of one per object.
+        let snapshot = NmSnapshot::fetch(&self.client).await?;
+
         // Refresh the adapter list; if the active path disappeared, fall back to
         // the first remaining device. `adapters` is only committed after any
         // fallible activation so `self` stays consistent on error.
-        let current = AdapterSummary::fetch_all(&self.client).await?;
+        let current = AdapterSummary::all(&snapshot);
         let paths_changed = current.len() != self.adapters.len()
             || current
                 .iter()
@@ -380,22 +385,19 @@ Error: {}",
                 .unwrap_or(self.active_index);
         }
 
-        self.device.refresh().await?;
+        self.device.refresh(&snapshot).await?;
 
         // Keep the VPN modal's on/off state live while it's open.
         if let Some(modal) = &mut self.vpn {
             modal.refresh(&self.client).await?;
         }
 
-        // Refresh the always-on VPN badge. Best-effort: a transient D-Bus error
-        // shouldn't take down the whole tick, so failures just leave it stale.
-        if let Ok(names) = self.client.get_active_vpn_names().await {
-            self.active_vpns = names;
-        }
+        // Refresh the always-on VPN badge.
+        self.active_vpns = self.client.active_vpn_names(&snapshot);
 
         // Refresh wired link status. Best-effort, and intentionally independent
         // of the WiFi power state so it stays visible when the radio is off.
-        if let Ok(eth) = self.client.active_ethernet().await {
+        if let Ok(eth) = self.client.active_ethernet(&snapshot).await {
             if let Some(station) = &mut self.device.station {
                 station.is_ethernet_connected = eth.is_some();
             }
@@ -403,9 +405,7 @@ Error: {}",
         }
 
         // Refresh which link owns the default route (the live internet path).
-        if let Ok(primary) = self.client.primary_link().await {
-            self.primary_link = primary;
-        }
+        self.primary_link = self.client.primary_link(&snapshot);
 
         Ok(())
     }
