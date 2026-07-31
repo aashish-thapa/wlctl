@@ -357,9 +357,16 @@ Error: {}",
         Ok(())
     }
 
-    pub async fn tick(&mut self) -> Result<()> {
+    /// Drops notifications past their deadline.
+    ///
+    /// Runs before every draw rather than on the refresh tick: a notification
+    /// can expire between ticks, and pruning only on the tick would paint it
+    /// past its lifetime on any redraw triggered by a keypress in between.
+    pub fn prune_expired_notifications(&mut self) {
         self.notifications.retain(|n| !n.is_expired());
+    }
 
+    pub async fn tick(&mut self) -> Result<()> {
         // One read of NetworkManager's object graph serves every refresh below,
         // so they all describe the same instant and cost one round trip between
         // them instead of one per object.

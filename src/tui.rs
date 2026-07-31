@@ -41,6 +41,7 @@ impl<B: Backend> Tui<B> {
     }
 
     pub fn draw(&mut self, app: &mut App) -> Result<()> {
+        app.prune_expired_notifications();
         self.terminal.draw(|frame| ui::render(app, frame))?;
         Ok(())
     }
