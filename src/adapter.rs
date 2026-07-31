@@ -13,10 +13,8 @@ use crate::config::Config;
 
 #[derive(Debug, Clone)]
 pub struct Adapter {
-    client: Arc<NMClient>,
     #[allow(dead_code)]
     device_path: String,
-    pub is_powered: bool,
     pub name: String,
     pub driver: Option<String>,
     pub vendor: Option<String>,
@@ -30,7 +28,6 @@ impl Adapter {
         device_path: String,
         config: Arc<Config>,
     ) -> Result<Self> {
-        let is_powered = client.is_wireless_enabled().await?;
         let name = client.get_device_interface(&device_path).await?;
 
         // NetworkManager doesn't expose driver/vendor info directly via D-Bus
@@ -43,20 +40,13 @@ impl Adapter {
         let supported_modes = vec!["station".to_string(), "ap".to_string()];
 
         Ok(Self {
-            client,
             device_path,
-            is_powered,
             name,
             driver,
             vendor,
             supported_modes,
             config,
         })
-    }
-
-    pub async fn refresh(&mut self) -> Result<()> {
-        self.is_powered = self.client.is_wireless_enabled().await?;
-        Ok(())
     }
 
     pub fn render(&self, frame: &mut Frame, device_addr: String) {
