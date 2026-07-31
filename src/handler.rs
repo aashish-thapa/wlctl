@@ -968,7 +968,7 @@ pub async fn handle_key_events(
                                         {
                                             // Only run speed test if connected
                                             if station.connected_network.is_some()
-                                                || station.is_ethernet_connected
+                                                || station.is_ethernet_connected()
                                             {
                                                 // Show loading popup
                                                 station.speed_test = Some(SpeedTest::new());

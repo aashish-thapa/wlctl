@@ -197,8 +197,15 @@ Error: {}",
         if adapters.is_empty() {
             return Err(anyhow!("No WiFi device found"));
         }
+        let ethernet = client.active_ethernet(&snapshot).await.unwrap_or(None);
+
         let active_index = 0;
-        let mut device = Device::new(client.clone(), adapters[active_index].path.clone()).await?;
+        let mut device = Device::new(
+            client.clone(),
+            adapters[active_index].path.clone(),
+            ethernet.is_some(),
+        )
+        .await?;
 
         let adapter =
             match Adapter::new(client.clone(), device.device_path.clone(), config.clone()).await {
@@ -208,7 +215,7 @@ Error: {}",
                 }
             };
 
-        device.set_mode(mode).await?;
+        device.set_mode(mode, ethernet.is_some()).await?;
 
         let agent = AuthAgent::new(sender);
 
@@ -236,7 +243,7 @@ Error: {}",
             doctor_run_id: 0,
             vpn: None,
             active_vpns: Vec::new(),
-            ethernet: None,
+            ethernet,
             primary_link: None,
         })
     }
@@ -276,7 +283,8 @@ Error: {}",
             .clone();
         let previous_mode = self.device.mode;
 
-        self.activate_device(target, previous_mode).await?;
+        self.activate_device(target, previous_mode, self.ethernet.is_some())
+            .await?;
         self.active_index = self.adapter_selection_index;
         Ok(())
     }
@@ -295,9 +303,16 @@ Error: {}",
     // Builds a Device + Adapter for the given path and only commits them to `self`
     // after every await has succeeded. Callers update `active_index`/`adapters`
     // after this returns Ok, so `self` stays consistent on failure.
-    async fn activate_device(&mut self, path: OwnedObjectPath, preserve_mode: Mode) -> Result<()> {
-        let mut new_device = Device::new(self.client.clone(), path).await?;
-        new_device.set_mode(preserve_mode).await?;
+    async fn activate_device(
+        &mut self,
+        path: OwnedObjectPath,
+        preserve_mode: Mode,
+        is_ethernet_connected: bool,
+    ) -> Result<()> {
+        let mut new_device = Device::new(self.client.clone(), path, is_ethernet_connected).await?;
+        new_device
+            .set_mode(preserve_mode, is_ethernet_connected)
+            .await?;
         let new_adapter = Adapter::new(
             self.client.clone(),
             new_device.device_path.clone(),
@@ -326,12 +341,19 @@ Error: {}",
             .next()
             .ok_or_else(|| anyhow!("No WiFi device found"))?;
 
-        let mut device = match Device::new(client.clone(), path).await {
+        let snapshot = NmSnapshot::fetch(&client).await?;
+        let is_ethernet_connected = client
+            .active_ethernet(&snapshot)
+            .await
+            .unwrap_or(None)
+            .is_some();
+
+        let mut device = match Device::new(client.clone(), path, is_ethernet_connected).await {
             Ok(v) => v,
             Err(e) => return Err(anyhow!("Can not access the NetworkManager service: {}", e)),
         };
 
-        device.set_mode(mode).await?;
+        device.set_mode(mode, is_ethernet_connected).await?;
         Ok(())
     }
 
@@ -343,6 +365,15 @@ Error: {}",
         // so they all describe the same instant and cost one round trip between
         // them instead of one per object.
         let snapshot = NmSnapshot::fetch(&self.client).await?;
+
+        // Resolved before anything below can build a station, so a station born
+        // during this tick starts with the right wired state instead of a
+        // default it would carry until the next one.
+        let ethernet = self
+            .client
+            .active_ethernet(&snapshot)
+            .await
+            .unwrap_or_else(|_| self.ethernet.clone());
 
         // Refresh the adapter list; if the active path disappeared, fall back to
         // the first remaining device. `adapters` is only committed after any
@@ -374,7 +405,8 @@ Error: {}",
                     }
                     let previous_mode = self.device.mode;
                     let fallback = current[0].path.clone();
-                    self.activate_device(fallback, previous_mode).await?;
+                    self.activate_device(fallback, previous_mode, ethernet.is_some())
+                        .await?;
                     self.active_index = 0;
                     self.adapters = current;
                 }
@@ -385,7 +417,7 @@ Error: {}",
                 .unwrap_or(self.active_index);
         }
 
-        self.device.refresh(&snapshot).await?;
+        self.device.refresh(&snapshot, ethernet.is_some()).await?;
 
         // Keep the VPN modal's on/off state live while it's open.
         if let Some(modal) = &mut self.vpn {
@@ -395,19 +427,24 @@ Error: {}",
         // Refresh the always-on VPN badge.
         self.active_vpns = self.client.active_vpn_names(&snapshot);
 
-        // Refresh wired link status. Best-effort, and intentionally independent
-        // of the WiFi power state so it stays visible when the radio is off.
-        if let Ok(eth) = self.client.active_ethernet(&snapshot).await {
-            if let Some(station) = &mut self.device.station {
-                station.is_ethernet_connected = eth.is_some();
-            }
-            self.ethernet = eth;
-        }
+        // Wired status is tracked here rather than on the WiFi device so it
+        // stays visible when the radio is off.
+        self.set_ethernet(ethernet);
 
         // Refresh which link owns the default route (the live internet path).
         self.primary_link = self.client.primary_link(&snapshot);
 
         Ok(())
+    }
+
+    /// Records the active wired link, keeping the station's ethernet row in
+    /// step. `App` owns this because wired status stays meaningful while the
+    /// WiFi radio — and with it the station — is off.
+    fn set_ethernet(&mut self, ethernet: Option<EthernetInfo>) {
+        if let Some(station) = &mut self.device.station {
+            station.set_ethernet_connected(ethernet.is_some());
+        }
+        self.ethernet = ethernet;
     }
 
     pub fn quit(&mut self) {

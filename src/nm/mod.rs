@@ -1002,11 +1002,6 @@ impl NMClient {
         Ok(proxy.get_property("ActiveConnections").await?)
     }
 
-    /// Check if there's an active Ethernet connection.
-    pub async fn has_active_ethernet_connection(&self, snapshot: &NmSnapshot) -> Result<bool> {
-        Ok(self.active_ethernet(snapshot).await?.is_some())
-    }
-
     /// Details of the first activated wired (`802-3-ethernet`) connection, if
     /// any. Resolved independently of the WiFi device so link status can be
     /// shown even while the WiFi radio is off. Includes the device interface
