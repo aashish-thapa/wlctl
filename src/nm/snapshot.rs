@@ -265,3 +265,298 @@ impl NmSnapshot {
         self.objects.get(&object_path)?.get(interface)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use zbus::zvariant::Value;
+
+    fn value<'a>(v: impl Into<Value<'a>>) -> OwnedValue {
+        OwnedValue::try_from(v.into()).expect("value is convertible")
+    }
+
+    fn object_path(path: &str) -> OwnedObjectPath {
+        OwnedObjectPath::try_from(path.to_string()).expect("valid object path")
+    }
+
+    fn access_point_props(ssid: &str, strength: u8) -> HashMap<String, OwnedValue> {
+        HashMap::from([
+            ("Ssid".to_string(), value(ssid.as_bytes().to_vec())),
+            ("Strength".to_string(), value(strength)),
+            ("Frequency".to_string(), value(2437u32)),
+            ("HwAddress".to_string(), value("00:11:22:33:44:55")),
+            ("Flags".to_string(), value(0u32)),
+            ("WpaFlags".to_string(), value(0u32)),
+            ("RsnFlags".to_string(), value(0u32)),
+            ("Mode".to_string(), value(2u32)),
+        ])
+    }
+
+    fn snapshot_of(objects: Vec<(&str, &str, HashMap<String, OwnedValue>)>) -> NmSnapshot {
+        let mut map: ManagedObjects = HashMap::new();
+        for (path, interface, props) in objects {
+            map.entry(object_path(path))
+                .or_default()
+                .insert(interface.to_string(), props);
+        }
+        NmSnapshot { objects: map }
+    }
+
+    #[test]
+    fn access_point_info_reads_properties() {
+        let info = access_point_info("/ap/1", &access_point_props("home", 71));
+
+        assert_eq!(info.path, "/ap/1");
+        assert_eq!(info.ssid, "home");
+        assert_eq!(info.strength, 71);
+        assert_eq!(info.frequency, 2437);
+        assert_eq!(info.hw_address, "00:11:22:33:44:55");
+    }
+
+    /// A snapshot can race an access point out of existence, so a partial
+    /// property map must degrade rather than panic or fail the refresh.
+    #[test]
+    fn access_point_info_defaults_absent_properties() {
+        let info = access_point_info("/ap/1", &HashMap::new());
+
+        assert_eq!(info.ssid, "");
+        assert_eq!(info.strength, 0);
+        assert_eq!(info.frequency, 0);
+        assert_eq!(info.hw_address, "");
+    }
+
+    #[test]
+    fn visible_networks_keeps_strongest_of_duplicate_ssids() {
+        let snapshot = snapshot_of(vec![
+            (
+                "/dev/1",
+                interface::DEVICE_WIRELESS,
+                HashMap::from([(
+                    "AccessPoints".to_string(),
+                    value(vec![object_path("/ap/1"), object_path("/ap/2")]),
+                )]),
+            ),
+            (
+                "/ap/1",
+                interface::ACCESS_POINT,
+                access_point_props("home", 40),
+            ),
+            (
+                "/ap/2",
+                interface::ACCESS_POINT,
+                access_point_props("home", 90),
+            ),
+        ]);
+
+        let networks = snapshot.visible_networks("/dev/1");
+
+        assert_eq!(networks.len(), 1);
+        assert_eq!(networks[0].strength, 90);
+    }
+
+    #[test]
+    fn visible_networks_skips_empty_ssids_and_sorts_by_strength() {
+        let snapshot = snapshot_of(vec![
+            (
+                "/dev/1",
+                interface::DEVICE_WIRELESS,
+                HashMap::from([(
+                    "AccessPoints".to_string(),
+                    value(vec![
+                        object_path("/ap/1"),
+                        object_path("/ap/2"),
+                        object_path("/ap/3"),
+                    ]),
+                )]),
+            ),
+            (
+                "/ap/1",
+                interface::ACCESS_POINT,
+                access_point_props("weak", 20),
+            ),
+            ("/ap/2", interface::ACCESS_POINT, access_point_props("", 99)),
+            (
+                "/ap/3",
+                interface::ACCESS_POINT,
+                access_point_props("strong", 80),
+            ),
+        ]);
+
+        let ssids: Vec<String> = snapshot
+            .visible_networks("/dev/1")
+            .into_iter()
+            .map(|n| n.ssid)
+            .collect();
+
+        assert_eq!(ssids, vec!["strong", "weak"]);
+    }
+
+    #[test]
+    fn visible_networks_is_empty_for_unknown_device() {
+        let snapshot = snapshot_of(vec![]);
+        assert!(snapshot.visible_networks("/dev/missing").is_empty());
+    }
+
+    #[test]
+    fn active_access_point_is_none_when_unassociated() {
+        let snapshot = snapshot_of(vec![(
+            "/dev/1",
+            interface::DEVICE_WIRELESS,
+            HashMap::from([("ActiveAccessPoint".to_string(), value(object_path("/")))]),
+        )]);
+
+        assert!(snapshot.active_access_point("/dev/1").is_none());
+    }
+
+    #[test]
+    fn active_access_point_resolves_through_the_snapshot() {
+        let snapshot = snapshot_of(vec![
+            (
+                "/dev/1",
+                interface::DEVICE_WIRELESS,
+                HashMap::from([("ActiveAccessPoint".to_string(), value(object_path("/ap/7")))]),
+            ),
+            (
+                "/ap/7",
+                interface::ACCESS_POINT,
+                access_point_props("home", 55),
+            ),
+        ]);
+
+        let active = snapshot.active_access_point("/dev/1").expect("resolves");
+        assert_eq!(active.ssid, "home");
+        assert_eq!(active.strength, 55);
+    }
+
+    /// The list is compared as a whole to decide whether saved profiles changed,
+    /// so it has to be ordered independently of the map's iteration order.
+    #[test]
+    fn connection_versions_are_sorted() {
+        let snapshot = snapshot_of(vec![
+            (
+                "/settings/2",
+                interface::SETTINGS_CONNECTION,
+                HashMap::from([("VersionId".to_string(), value(9u64))]),
+            ),
+            (
+                "/settings/1",
+                interface::SETTINGS_CONNECTION,
+                HashMap::from([("VersionId".to_string(), value(3u64))]),
+            ),
+        ]);
+
+        assert_eq!(
+            snapshot.connection_versions(),
+            vec![
+                ("/settings/1".to_string(), Some(3)),
+                ("/settings/2".to_string(), Some(9)),
+            ]
+        );
+    }
+
+    /// An unreadable version must stay distinguishable from a real one, since
+    /// it is the key that decides whether cached profiles are still valid.
+    #[test]
+    fn connection_versions_keep_unreadable_versions_unknown() {
+        let snapshot = snapshot_of(vec![(
+            "/settings/1",
+            interface::SETTINGS_CONNECTION,
+            HashMap::new(),
+        )]);
+
+        assert_eq!(
+            snapshot.connection_versions(),
+            vec![("/settings/1".to_string(), None)]
+        );
+    }
+
+    #[test]
+    fn connection_versions_ignore_non_profile_objects() {
+        let snapshot = snapshot_of(vec![(
+            "/ap/1",
+            interface::ACCESS_POINT,
+            access_point_props("home", 50),
+        )]);
+
+        assert!(snapshot.connection_versions().is_empty());
+    }
+
+    /// Adapter rows are diffed positionally each refresh, so this must follow
+    /// NetworkManager's own ordering rather than map iteration order.
+    #[test]
+    fn wifi_devices_keep_manager_order_and_skip_other_types() {
+        let device = |kind: u32| HashMap::from([("DeviceType".to_string(), value(kind))]);
+        let snapshot = snapshot_of(vec![
+            (
+                "/org/freedesktop/NetworkManager",
+                interface::NETWORK_MANAGER,
+                HashMap::from([(
+                    "Devices".to_string(),
+                    value(vec![
+                        object_path("/dev/3"),
+                        object_path("/dev/1"),
+                        object_path("/dev/2"),
+                    ]),
+                )]),
+            ),
+            ("/dev/1", interface::DEVICE, device(WIFI_DEVICE_TYPE)),
+            ("/dev/2", interface::DEVICE, device(1)),
+            ("/dev/3", interface::DEVICE, device(WIFI_DEVICE_TYPE)),
+        ]);
+
+        let paths: Vec<String> = snapshot
+            .wifi_devices()
+            .iter()
+            .map(|p| p.as_str().to_string())
+            .collect();
+
+        assert_eq!(paths, vec!["/dev/3", "/dev/1"]);
+    }
+
+    #[test]
+    fn device_state_and_interface_read_from_the_device_interface() {
+        let snapshot = snapshot_of(vec![(
+            "/dev/1",
+            interface::DEVICE,
+            HashMap::from([
+                ("Interface".to_string(), value("wlan0")),
+                ("State".to_string(), value(100u32)),
+            ]),
+        )]);
+
+        assert_eq!(
+            snapshot.device_interface("/dev/1").as_deref(),
+            Some("wlan0")
+        );
+        assert_eq!(
+            snapshot.device_state("/dev/1"),
+            Some(DeviceState::Activated)
+        );
+        assert!(snapshot.device_state("/dev/missing").is_none());
+    }
+
+    #[test]
+    fn active_connection_info_defaults_absent_properties() {
+        let info = active_connection_info("/active/1", &HashMap::new());
+
+        assert_eq!(info.path, "/active/1");
+        assert_eq!(info.id, "");
+        assert_eq!(info.connection_type, "");
+        assert!(info.devices.is_empty());
+    }
+
+    #[test]
+    fn active_connection_info_reads_devices() {
+        let props = HashMap::from([
+            ("Id".to_string(), value("wired")),
+            ("Type".to_string(), value("802-3-ethernet")),
+            ("Devices".to_string(), value(vec![object_path("/dev/2")])),
+        ]);
+
+        let info = active_connection_info("/active/1", &props);
+
+        assert_eq!(info.id, "wired");
+        assert_eq!(info.connection_type, "802-3-ethernet");
+        assert_eq!(info.devices, vec!["/dev/2".to_string()]);
+    }
+}
