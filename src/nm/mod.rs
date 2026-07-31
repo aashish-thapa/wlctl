@@ -4,17 +4,17 @@
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::net::IpAddr;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 use zbus::zvariant::{ObjectPath, OwnedObjectPath, OwnedValue, Value};
 use zbus::{Connection, Proxy};
 
 pub mod dbus_interfaces;
+pub mod snapshot;
 pub mod types;
 pub mod wifi;
 
+pub use snapshot::NmSnapshot;
 pub use types::*;
-
-pub type ManagedObjects = HashMap<OwnedObjectPath, HashMap<String, HashMap<String, OwnedValue>>>;
 
 const NM_BUS_NAME: &str = "org.freedesktop.NetworkManager";
 const NM_PATH: &str = "/org/freedesktop/NetworkManager";
@@ -73,13 +73,13 @@ fn ipv6_dns_bytes(dns: &[IpAddr]) -> Vec<Vec<u8>> {
         .collect()
 }
 
-/// Saved wifi connections plus the `(path, VersionId)` fingerprint they were
-/// built from. When the fingerprint is unchanged, the list is reused instead of
-/// re-reading every connection's settings.
+/// Saved WiFi profiles together with the `(path, VersionId)` list they were
+/// built from, so an unchanged list can be served without re-reading every
+/// profile's settings.
 #[derive(Debug)]
-struct WifiConnCache {
-    fingerprint: Vec<(String, u64)>,
-    connections: Vec<ConnectionInfo>,
+struct WifiConnectionCache {
+    versions: Vec<(String, Option<u64>)>,
+    connections: Arc<[ConnectionInfo]>,
 }
 
 /// Main NetworkManager client
@@ -87,7 +87,7 @@ struct WifiConnCache {
 pub struct NMClient {
     connection: Connection,
     // Shared across clones so the cache is process-wide.
-    wifi_conn_cache: Arc<Mutex<Option<WifiConnCache>>>,
+    wifi_connection_cache: Arc<Mutex<Option<WifiConnectionCache>>>,
 }
 
 impl NMClient {
@@ -113,7 +113,7 @@ impl NMClient {
 
         Ok(Self {
             connection,
-            wifi_conn_cache: Arc::new(Mutex::new(None)),
+            wifi_connection_cache: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -355,52 +355,10 @@ impl NMClient {
         }
     }
 
-    /// Build an `AccessPointInfo` from an AccessPoint interface's property map,
-    /// as returned by either `Properties.GetAll` or `ObjectManager`.
-    fn access_point_info_from_props(
-        ap_path: &str,
-        props: &HashMap<String, OwnedValue>,
-    ) -> AccessPointInfo {
-        let u32_of = |key: &str| -> u32 {
-            props
-                .get(key)
-                .and_then(|v| v.try_clone().ok())
-                .and_then(|v| u32::try_from(v).ok())
-                .unwrap_or(0)
-        };
-
-        let ssid_bytes: Vec<u8> = props
-            .get("Ssid")
-            .and_then(|v| v.try_clone().ok())
-            .and_then(|v| Vec::<u8>::try_from(v).ok())
-            .unwrap_or_default();
-        let ssid = String::from_utf8_lossy(&ssid_bytes).to_string();
-        let strength: u8 = props
-            .get("Strength")
-            .and_then(|v| v.try_clone().ok())
-            .and_then(|v| u8::try_from(v).ok())
-            .unwrap_or(0);
-        let hw_address: String = props
-            .get("HwAddress")
-            .and_then(|v| v.try_clone().ok())
-            .and_then(|v| String::try_from(v).ok())
-            .unwrap_or_default();
-        let flags = u32_of("Flags");
-        let wpa_flags = u32_of("WpaFlags");
-        let rsn_flags = u32_of("RsnFlags");
-
-        AccessPointInfo {
-            path: ap_path.to_string(),
-            ssid,
-            strength,
-            frequency: u32_of("Frequency"),
-            hw_address,
-            security: SecurityType::from_flags(flags, wpa_flags, rsn_flags),
-            mode: WifiMode::from(u32_of("Mode")),
-        }
-    }
-
     /// Get access point details via a single `Properties.GetAll`.
+    ///
+    /// Prefer reading from an [`NmSnapshot`] when more than one object is
+    /// needed; this exists for callers that hold a single path.
     pub async fn get_access_point_info(&self, ap_path: &str) -> Result<AccessPointInfo> {
         let props = Proxy::new(
             &self.connection,
@@ -411,25 +369,10 @@ impl NMClient {
         .await?;
 
         let all: HashMap<String, OwnedValue> = props
-            .call("GetAll", &("org.freedesktop.NetworkManager.AccessPoint",))
+            .call("GetAll", &(snapshot::interface::ACCESS_POINT,))
             .await?;
 
-        Ok(Self::access_point_info_from_props(ap_path, &all))
-    }
-
-    /// Fetch every managed NM object with all its interface properties in one
-    /// ObjectManager round-trip. Used to enumerate all visible APs at once
-    /// instead of a `GetAll` per AP.
-    pub async fn get_managed_objects(&self) -> Result<ManagedObjects> {
-        let proxy = Proxy::new(
-            &self.connection,
-            NM_BUS_NAME,
-            "/org/freedesktop",
-            "org.freedesktop.DBus.ObjectManager",
-        )
-        .await?;
-
-        Ok(proxy.call("GetManagedObjects", &()).await?)
+        Ok(snapshot::access_point_info(ap_path, &all))
     }
 
     /// Get all saved connections
@@ -494,148 +437,115 @@ impl NMClient {
         Ok(None)
     }
 
-    /// Get WiFi connection profiles
-    #[allow(clippy::collapsible_if, clippy::map_flatten)]
-    pub async fn get_wifi_connections(&self) -> Result<Vec<ConnectionInfo>> {
-        let managed = self.get_managed_objects().await?;
-        self.get_wifi_connections_from_managed(&managed).await
+    /// Get WiFi connection profiles, reading the object graph once.
+    pub async fn get_wifi_connections(&self) -> Result<Arc<[ConnectionInfo]>> {
+        let snapshot = NmSnapshot::fetch(self).await?;
+        self.wifi_connections(&snapshot).await
     }
 
-    /// Get WiFi connection profiles using an existing ObjectManager snapshot.
-    #[allow(clippy::collapsible_if, clippy::map_flatten)]
-    pub async fn get_wifi_connections_from_managed(
-        &self,
-        managed: &ManagedObjects,
-    ) -> Result<Vec<ConnectionInfo>> {
-        // Reading GetSettings for every saved connection on each refresh is the
-        // dominant per-tick cost when many profiles exist. Saved connections
-        // change rarely, so fingerprint them by (path, VersionId) -- both come
-        // free from the ObjectManager payload -- and rebuild only on change.
-        const CONN_IFACE: &str = "org.freedesktop.NetworkManager.Settings.Connection";
-        let mut fingerprint: Vec<(String, u64)> = managed
-            .iter()
-            .filter_map(|(path, ifaces)| {
-                let props = ifaces.get(CONN_IFACE)?;
-                let version = props
-                    .get("VersionId")
-                    .and_then(|v| v.try_clone().ok())
-                    .and_then(|v| u64::try_from(v).ok())
-                    .unwrap_or(0);
-                Some((path.as_str().to_string(), version))
-            })
-            .collect();
-        fingerprint.sort();
-
-        // Cache hit: nothing added, removed, or edited since last time.
-        if let Ok(guard) = self.wifi_conn_cache.lock()
-            && let Some(cache) = guard.as_ref()
-            && cache.fingerprint == fingerprint
-        {
-            return Ok(cache.connections.clone());
+    /// Get the WiFi connection profiles described by `snapshot`.
+    ///
+    /// `GetSettings` costs a round trip per saved profile and dominates a
+    /// refresh once a machine has accumulated a few hundred of them. Profiles
+    /// change rarely, so the previous result is reused until `snapshot` reports
+    /// one added, removed, or edited.
+    pub async fn wifi_connections(&self, snapshot: &NmSnapshot) -> Result<Arc<[ConnectionInfo]>> {
+        let versions = snapshot.connection_versions();
+        if let Some(cached) = self.cached_wifi_connections(&versions) {
+            return Ok(cached);
         }
 
-        let connections = self.get_connections().await?;
         let mut wifi_connections = Vec::new();
-
-        for conn_path in connections {
-            if let Ok(settings) = self.get_connection_settings(conn_path.as_str()).await {
-                if let Some(connection_settings) = settings.get("connection") {
-                    if let Some(conn_type) = connection_settings.get("type") {
-                        let type_str: String = conn_type.try_clone()?.try_into()?;
-                        if type_str == "802-11-wireless" {
-                            let id: String = connection_settings
-                                .get("id")
-                                .map(|v| v.try_clone().ok().and_then(|v| v.try_into().ok()))
-                                .flatten()
-                                .unwrap_or_default();
-
-                            let uuid: String = connection_settings
-                                .get("uuid")
-                                .map(|v| v.try_clone().ok().and_then(|v| v.try_into().ok()))
-                                .flatten()
-                                .unwrap_or_default();
-
-                            let autoconnect: bool = connection_settings
-                                .get("autoconnect")
-                                .map(|v| v.try_clone().ok().and_then(|v| v.try_into().ok()))
-                                .flatten()
-                                .unwrap_or(true);
-
-                            let timestamp: u64 = connection_settings
-                                .get("timestamp")
-                                .map(|v| v.try_clone().ok().and_then(|v| v.try_into().ok()))
-                                .flatten()
-                                .unwrap_or(0);
-
-                            // Get SSID from wireless settings
-                            let ssid =
-                                if let Some(wireless_settings) = settings.get("802-11-wireless") {
-                                    wireless_settings
-                                        .get("ssid")
-                                        .map(|v| {
-                                            v.try_clone().ok().and_then(|v| {
-                                                let bytes: Result<Vec<u8>, _> = v.try_into();
-                                                bytes.ok().map(|b| {
-                                                    String::from_utf8_lossy(&b).to_string()
-                                                })
-                                            })
-                                        })
-                                        .flatten()
-                                        .unwrap_or(id.clone())
-                                } else {
-                                    id.clone()
-                                };
-
-                            // Check if it's a hidden network
-                            let hidden =
-                                if let Some(wireless_settings) = settings.get("802-11-wireless") {
-                                    wireless_settings
-                                        .get("hidden")
-                                        .map(|v| v.try_clone().ok().and_then(|v| v.try_into().ok()))
-                                        .flatten()
-                                        .unwrap_or(false)
-                                } else {
-                                    false
-                                };
-
-                            // Get security type from wireless-security settings
-                            let security = if settings.contains_key("802-11-wireless-security") {
-                                if settings.contains_key("802-1x") {
-                                    SecurityType::Enterprise
-                                } else {
-                                    SecurityType::WPA
-                                }
-                            } else {
-                                SecurityType::Open
-                            };
-
-                            wifi_connections.push(ConnectionInfo {
-                                path: conn_path.to_string(),
-                                id,
-                                uuid,
-                                ssid,
-                                autoconnect,
-                                timestamp,
-                                hidden,
-                                security,
-                            });
-                        }
-                    }
-                }
+        for (path, _) in &versions {
+            let Ok(settings) = self.get_connection_settings(path).await else {
+                continue;
+            };
+            let Some(connection) = settings.get("connection") else {
+                continue;
+            };
+            if setting_str(connection, "type").as_deref() != Some("802-11-wireless") {
+                continue;
             }
+
+            let id = setting_str(connection, "id").unwrap_or_default();
+            let wireless = settings.get("802-11-wireless");
+            // NetworkManager stores the SSID as raw bytes; the profile name is
+            // the best stand-in when it is absent.
+            let ssid = wireless
+                .and_then(|w| w.get("ssid"))
+                .and_then(|v| v.try_clone().ok())
+                .and_then(|v| Vec::<u8>::try_from(v).ok())
+                .map(|bytes| String::from_utf8_lossy(&bytes).to_string())
+                .unwrap_or_else(|| id.clone());
+            let security = if settings.contains_key("802-11-wireless-security") {
+                if settings.contains_key("802-1x") {
+                    SecurityType::Enterprise
+                } else {
+                    SecurityType::WPA
+                }
+            } else {
+                SecurityType::Open
+            };
+
+            wifi_connections.push(ConnectionInfo {
+                path: path.clone(),
+                id,
+                uuid: setting_str(connection, "uuid").unwrap_or_default(),
+                ssid,
+                // NetworkManager omits `autoconnect` when it is at its default of true.
+                autoconnect: setting_bool(connection, "autoconnect").unwrap_or(true),
+                timestamp: setting_u64(connection, "timestamp").unwrap_or(0),
+                hidden: wireless
+                    .and_then(|w| setting_bool(w, "hidden"))
+                    .unwrap_or(false),
+                security,
+            });
         }
 
         // Sort by timestamp (most recent first)
         wifi_connections.sort_by_key(|c| std::cmp::Reverse(c.timestamp));
 
-        if let Ok(mut guard) = self.wifi_conn_cache.lock() {
-            *guard = Some(WifiConnCache {
-                fingerprint,
-                connections: wifi_connections.clone(),
-            });
+        let connections: Arc<[ConnectionInfo]> = wifi_connections.into();
+        self.store_wifi_connections(versions, &connections);
+        Ok(connections)
+    }
+
+    /// The previously built profile list, when `versions` still describes it.
+    fn cached_wifi_connections(
+        &self,
+        versions: &[(String, Option<u64>)],
+    ) -> Option<Arc<[ConnectionInfo]>> {
+        let guard = self.lock_wifi_connection_cache();
+        let cache = guard.as_ref()?;
+        (cache.versions == versions).then(|| Arc::clone(&cache.connections))
+    }
+
+    /// Remembers `connections` against the versions they were built from.
+    ///
+    /// A list containing an unreadable version is not stored: it could not be
+    /// invalidated reliably, so serving it again later would be a guess.
+    fn store_wifi_connections(
+        &self,
+        versions: Vec<(String, Option<u64>)>,
+        connections: &Arc<[ConnectionInfo]>,
+    ) {
+        if versions.iter().any(|(_, version)| version.is_none()) {
+            return;
         }
 
-        Ok(wifi_connections)
+        *self.lock_wifi_connection_cache() = Some(WifiConnectionCache {
+            versions,
+            connections: Arc::clone(connections),
+        });
+    }
+
+    /// The cache holds plain data with no invariant a panic could leave broken,
+    /// so a poisoned lock is recovered rather than propagated. Abandoning the
+    /// cache would silently reinstate the per-profile read storm it prevents.
+    fn lock_wifi_connection_cache(&self) -> MutexGuard<'_, Option<WifiConnectionCache>> {
+        self.wifi_connection_cache
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     /// List saved VPN / WireGuard connection profiles, sorted by name.
@@ -674,24 +584,17 @@ impl NMClient {
 
     /// Names of the VPN / WireGuard profiles that are currently activated.
     /// Drives the always-on VPN indicator without opening the modal.
-    pub async fn get_active_vpn_names(&self) -> Result<Vec<String>> {
-        let mut names = Vec::new();
-
-        for active_path in self.get_active_connections().await? {
-            let Ok(info) = self.get_active_connection_info(active_path.as_str()).await else {
-                continue;
-            };
-            if info.state != ActiveConnectionState::Activated {
-                continue;
-            }
-            let is_vpn = info.connection_type == "vpn" || info.connection_type == "wireguard";
-            if is_vpn {
-                names.push(info.id);
-            }
-        }
+    pub fn active_vpn_names(&self, snapshot: &NmSnapshot) -> Vec<String> {
+        let mut names: Vec<String> = snapshot
+            .active_connections()
+            .into_iter()
+            .filter(|info| info.state == ActiveConnectionState::Activated)
+            .filter(|info| info.connection_type == "vpn" || info.connection_type == "wireguard")
+            .map(|info| info.id)
+            .collect();
 
         names.sort_by_key(|n| n.to_lowercase());
-        Ok(names)
+        names
     }
 
     /// First IPv4 address (as `addr/prefix`) assigned to an active connection,
@@ -1100,8 +1003,8 @@ impl NMClient {
     }
 
     /// Check if there's an active Ethernet connection.
-    pub async fn has_active_ethernet_connection(&self) -> Result<bool> {
-        Ok(self.active_ethernet().await?.is_some())
+    pub async fn has_active_ethernet_connection(&self, snapshot: &NmSnapshot) -> Result<bool> {
+        Ok(self.active_ethernet(snapshot).await?.is_some())
     }
 
     /// Details of the first activated wired (`802-3-ethernet`) connection, if
@@ -1109,13 +1012,8 @@ impl NMClient {
     /// shown even while the WiFi radio is off. Includes the device interface
     /// and primary IPv4 address when they can be read; those are best-effort
     /// and left `None` rather than failing the whole lookup.
-    pub async fn active_ethernet(&self) -> Result<Option<EthernetInfo>> {
-        let active_connections = self.get_active_connections().await?;
-
-        for conn_path in active_connections {
-            let Ok(info) = self.get_active_connection_info(conn_path.as_str()).await else {
-                continue;
-            };
+    pub async fn active_ethernet(&self, snapshot: &NmSnapshot) -> Result<Option<EthernetInfo>> {
+        for info in snapshot.active_connections() {
             if info.state != ActiveConnectionState::Activated {
                 continue;
             }
@@ -1125,10 +1023,9 @@ impl NMClient {
             }
 
             let device_path = info.devices.first().cloned();
-            let interface = match &device_path {
-                Some(path) => self.get_device_interface(path).await.ok(),
-                None => None,
-            };
+            let interface = device_path
+                .as_deref()
+                .and_then(|path| snapshot.device_interface(path));
             let ipv4 = match &device_path {
                 Some(path) => self
                     .get_ip4_info(path)
@@ -1152,26 +1049,11 @@ impl NMClient {
     /// The connection NetworkManager is currently using as the default route —
     /// the link that actually carries internet traffic. `None` when NM reports
     /// no primary connection (e.g. nothing is online).
-    pub async fn primary_link(&self) -> Result<Option<PrimaryLink>> {
-        let proxy = Proxy::new(
-            &self.connection,
-            NM_BUS_NAME,
-            NM_PATH,
-            "org.freedesktop.NetworkManager",
-        )
-        .await?;
-
-        let path: OwnedObjectPath = proxy.get_property("PrimaryConnection").await?;
-        if path.as_str() == "/" {
-            return Ok(None);
-        }
-
-        let info = self.get_active_connection_info(path.as_str()).await?;
-
-        Ok(Some(PrimaryLink {
+    pub fn primary_link(&self, snapshot: &NmSnapshot) -> Option<PrimaryLink> {
+        snapshot.primary_connection().map(|info| PrimaryLink {
             id: info.id,
             kind: LinkKind::from_nm_type(&info.connection_type),
-        }))
+        })
     }
 
     /// Activated WiFi / Ethernet connections paired with their device, used to
@@ -1288,51 +1170,10 @@ impl NMClient {
         .await?;
 
         let props: HashMap<String, OwnedValue> = proxy
-            .call(
-                "GetAll",
-                &("org.freedesktop.NetworkManager.Connection.Active",),
-            )
+            .call("GetAll", &(snapshot::interface::CONNECTION_ACTIVE,))
             .await?;
-        let id: String = props
-            .get("Id")
-            .context("Active connection has no Id")?
-            .try_clone()?
-            .try_into()?;
-        let uuid: String = props
-            .get("Uuid")
-            .context("Active connection has no Uuid")?
-            .try_clone()?
-            .try_into()?;
-        let connection_type: String = props
-            .get("Type")
-            .context("Active connection has no Type")?
-            .try_clone()?
-            .try_into()?;
-        let state: u32 = props
-            .get("State")
-            .context("Active connection has no State")?
-            .try_clone()?
-            .try_into()?;
-        let connection_path: OwnedObjectPath = props
-            .get("Connection")
-            .context("Active connection has no Connection")?
-            .try_clone()?
-            .try_into()?;
-        let devices: Vec<OwnedObjectPath> = props
-            .get("Devices")
-            .context("Active connection has no Devices")?
-            .try_clone()?
-            .try_into()?;
 
-        Ok(ActiveConnectionInfo {
-            path: active_conn_path.to_string(),
-            id,
-            uuid,
-            connection_type,
-            state: ActiveConnectionState::from(state),
-            connection_path: connection_path.to_string(),
-            devices: devices.iter().map(|p| p.to_string()).collect(),
-        })
+        Ok(snapshot::active_connection_info(active_conn_path, &props))
     }
 
     /// Wait for an activation attempt to reach a terminal state.

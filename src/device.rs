@@ -2,7 +2,7 @@ use anyhow::Result;
 use std::sync::Arc;
 use zbus::zvariant::OwnedObjectPath;
 
-use crate::nm::{EthernetInfo, Mode, NMClient};
+use crate::nm::{EthernetInfo, Mode, NMClient, NmSnapshot};
 
 use ratatui::{
     Frame,
@@ -117,14 +117,14 @@ impl Device {
         Ok(())
     }
 
-    pub async fn refresh(&mut self) -> Result<()> {
-        self.is_powered = self.client.is_wireless_enabled().await?;
+    pub async fn refresh(&mut self, snapshot: &NmSnapshot) -> Result<()> {
+        self.is_powered = snapshot.wireless_enabled().unwrap_or(self.is_powered);
 
         if self.is_powered {
             match self.mode {
                 Mode::Station => {
                     if let Some(station) = &mut self.station {
-                        station.refresh().await?;
+                        station.refresh(snapshot).await?;
                     } else {
                         self.station = Station::new(self.client.clone(), self.device_path.clone())
                             .await
