@@ -381,7 +381,6 @@ Error: {}",
         }
 
         self.device.refresh().await?;
-        self.adapter.is_powered = self.device.is_powered;
 
         // Keep the VPN modal's on/off state live while it's open.
         if let Some(modal) = &mut self.vpn {
