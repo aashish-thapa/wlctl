@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use toml;
 
 use dirs;
@@ -16,6 +18,12 @@ pub struct Config {
 
     #[serde(default = "default_vpn")]
     pub vpn: char,
+
+    /// How often to re-read NetworkManager state, in milliseconds. Raising this
+    /// trades how quickly changes made outside wlctl show up for less work per
+    /// second on machines with many saved profiles.
+    #[serde(default = "default_refresh_interval_ms")]
+    pub refresh_interval_ms: u64,
 
     #[serde(default)]
     pub device: Device,
@@ -42,6 +50,14 @@ fn default_esc_quit() -> bool {
 fn default_vpn() -> char {
     'v'
 }
+
+fn default_refresh_interval_ms() -> u64 {
+    1_000
+}
+
+/// Floor for [`Config::refresh_interval`]. A mistyped interval should slow the
+/// UI down, never turn it into a busy loop.
+const MIN_REFRESH_INTERVAL_MS: u64 = 250;
 
 // Device
 #[derive(Deserialize, Debug)]
@@ -196,6 +212,11 @@ fn default_ap_stop() -> char {
 }
 
 impl Config {
+    /// How often to re-read NetworkManager state.
+    pub fn refresh_interval(&self) -> Duration {
+        Duration::from_millis(self.refresh_interval_ms.max(MIN_REFRESH_INTERVAL_MS))
+    }
+
     pub fn new() -> Self {
         let conf_path = dirs::config_dir()
             .unwrap()

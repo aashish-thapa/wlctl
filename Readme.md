@@ -136,6 +136,10 @@ mode = "station"
 esc_quit = false
 vpn = "v"
 
+# How often to re-read NetworkManager state, in milliseconds.
+# Raise it to trade responsiveness for less background work.
+refresh_interval_ms = 1000
+
 [device]
 infos = "i"
 toggle_power = "o"
