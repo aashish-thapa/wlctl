@@ -31,7 +31,11 @@ pub struct Device {
 }
 
 impl Device {
-    pub async fn new(client: Arc<NMClient>, device_path: OwnedObjectPath) -> Result<Self> {
+    pub async fn new(
+        client: Arc<NMClient>,
+        device_path: OwnedObjectPath,
+        is_ethernet_connected: bool,
+    ) -> Result<Self> {
         let device_path_str = device_path.as_str().to_string();
 
         let name = client.get_device_interface(&device_path_str).await?;
@@ -45,7 +49,12 @@ impl Device {
         let (station, ap) = if is_powered {
             match mode {
                 Mode::Station => {
-                    if let Ok(station) = Station::new(client.clone(), device_path_str.clone()).await
+                    if let Ok(station) = Station::new(
+                        client.clone(),
+                        device_path_str.clone(),
+                        is_ethernet_connected,
+                    )
+                    .await
                     {
                         (Some(station), None)
                     } else {
@@ -77,7 +86,7 @@ impl Device {
         })
     }
 
-    pub async fn set_mode(&mut self, mode: Mode) -> Result<()> {
+    pub async fn set_mode(&mut self, mode: Mode, is_ethernet_connected: bool) -> Result<()> {
         // In NetworkManager, we don't switch modes explicitly
         // Instead, we activate different connection types
         // For AP mode, we'll create a hotspot connection
@@ -89,9 +98,13 @@ impl Device {
             Mode::Station => {
                 self.ap = None;
                 if self.is_powered {
-                    self.station = Station::new(self.client.clone(), self.device_path.clone())
-                        .await
-                        .ok();
+                    self.station = Station::new(
+                        self.client.clone(),
+                        self.device_path.clone(),
+                        is_ethernet_connected,
+                    )
+                    .await
+                    .ok();
                 }
             }
             Mode::Ap => {
@@ -117,7 +130,11 @@ impl Device {
         Ok(())
     }
 
-    pub async fn refresh(&mut self, snapshot: &NmSnapshot) -> Result<()> {
+    pub async fn refresh(
+        &mut self,
+        snapshot: &NmSnapshot,
+        is_ethernet_connected: bool,
+    ) -> Result<()> {
         self.is_powered = snapshot.wireless_enabled().unwrap_or(self.is_powered);
 
         if self.is_powered {
@@ -126,9 +143,13 @@ impl Device {
                     if let Some(station) = &mut self.station {
                         station.refresh(snapshot).await?;
                     } else {
-                        self.station = Station::new(self.client.clone(), self.device_path.clone())
-                            .await
-                            .ok();
+                        self.station = Station::new(
+                            self.client.clone(),
+                            self.device_path.clone(),
+                            is_ethernet_connected,
+                        )
+                        .await
+                        .ok();
                     }
                 }
                 Mode::Ap => {

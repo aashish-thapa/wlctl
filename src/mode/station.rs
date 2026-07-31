@@ -110,7 +110,10 @@ pub struct Station {
     pub state: StationState,
     pub is_scanning: bool,
     pub connected_network: Option<Network>,
-    pub is_ethernet_connected: bool,
+    /// Whether a wired link is up. Owned by `App`, which tracks ethernet
+    /// independently of the WiFi radio so the row stays correct with the radio
+    /// off; the station only renders it and offsets its table rows by it.
+    is_ethernet_connected: bool,
     pub new_networks: Vec<(Network, i16)>,
     pub new_hidden_networks: Vec<HiddenNetwork>,
     pub known_networks: Vec<(Network, i16)>,
@@ -136,7 +139,11 @@ pub struct Station {
 }
 
 impl Station {
-    pub async fn new(client: Arc<NMClient>, device_path: String) -> Result<Self> {
+    pub async fn new(
+        client: Arc<NMClient>,
+        device_path: String,
+        is_ethernet_connected: bool,
+    ) -> Result<Self> {
         let device_state = client.get_device_state(&device_path).await?;
         let state = StationState::from(device_state);
 
@@ -146,10 +153,6 @@ impl Station {
         let _ = client.request_scan(&device_path).await;
 
         let snapshot = NmSnapshot::fetch(&client).await?;
-        let is_ethernet_connected = client
-            .has_active_ethernet_connection(&snapshot)
-            .await
-            .unwrap_or(false);
         let visible_networks = snapshot.visible_networks(&device_path);
         let saved_connections = client.wifi_connections(&snapshot).await?;
         let active_ap = snapshot.active_access_point(&device_path);
@@ -199,6 +202,17 @@ impl Station {
             filter_input: false,
             visible_new,
         })
+    }
+
+    /// Whether a wired link is currently up.
+    pub fn is_ethernet_connected(&self) -> bool {
+        self.is_ethernet_connected
+    }
+
+    /// Records wired-link presence. `App` resolves this once per refresh and
+    /// pushes it down, so the station never queries it a second time.
+    pub fn set_ethernet_connected(&mut self, connected: bool) {
+        self.is_ethernet_connected = connected;
     }
 
     /// Reads the active adapter's primary IPv4, if any. Best-effort: a missing
