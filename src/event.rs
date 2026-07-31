@@ -1,9 +1,4 @@
 use anyhow::Result;
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
-};
-use std::time::Duration;
 
 use crate::nm::Mode;
 use crossterm::event::{Event as CrosstermEvent, KeyEvent, MouseEvent};
@@ -37,41 +32,29 @@ pub enum Event {
     },
 }
 
+/// Forwards terminal input into the main loop.
+///
+/// Periodic refreshes are not produced here: the main loop drives them from its
+/// own timer so a refresh can never be queued while one is already running.
 #[allow(dead_code)]
 #[derive(Debug)]
 pub struct EventHandler {
     pub sender: mpsc::UnboundedSender<Event>,
     pub receiver: mpsc::UnboundedReceiver<Event>,
     handler: tokio::task::JoinHandle<()>,
-    tick_pending: Arc<AtomicBool>,
 }
 
 impl EventHandler {
-    pub fn new(tick_rate: u64) -> Self {
-        let tick_rate = Duration::from_millis(tick_rate);
+    pub fn new() -> Self {
         let (sender, receiver) = mpsc::unbounded_channel();
         let sender_cloned = sender.clone();
-        let tick_pending = Arc::new(AtomicBool::new(false));
-        let tick_pending_cloned = tick_pending.clone();
         let handler = tokio::spawn(async move {
             let mut reader = crossterm::event::EventStream::new();
-            let mut tick = tokio::time::interval(tick_rate);
             loop {
-                let tick_delay = tick.tick();
                 let crossterm_event = reader.next().fuse();
                 tokio::select! {
                   () = sender_cloned.closed() => {
                     break;
-                  }
-                  _ = tick_delay => {
-                    // A refresh can take longer than the timer interval. Keep
-                    // at most one timer tick queued so the UI does not spend
-                    // its time catching up with stale refresh requests.
-                    if !tick_pending_cloned.swap(true, Ordering::AcqRel)
-                        && sender_cloned.send(Event::Tick).is_err()
-                    {
-                        break;
-                    }
                   }
                   Some(Ok(evt)) = crossterm_event => {
                     match evt {
@@ -98,20 +81,23 @@ impl EventHandler {
             sender,
             receiver,
             handler,
-            tick_pending,
         }
     }
 
+    /// Waits for the next terminal event.
+    ///
+    /// Cancel-safe: the underlying receive drops without losing a message, so
+    /// this can be raced against a timer in `select!`.
     pub async fn next(&mut self) -> Result<Event> {
         self.receiver
             .recv()
             .await
             .ok_or(std::io::Error::other("This is an IO error").into())
     }
+}
 
-    /// Allow the timer to enqueue another refresh after the current one has
-    /// fully completed.
-    pub fn mark_tick_handled(&self) {
-        self.tick_pending.store(false, Ordering::Release);
+impl Default for EventHandler {
+    fn default() -> Self {
+        Self::new()
     }
 }

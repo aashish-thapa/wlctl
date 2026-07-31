@@ -3,7 +3,9 @@ use anyhow::anyhow;
 use env_logger::Target;
 use ratatui::{Terminal, backend::CrosstermBackend};
 use std::sync::Arc;
+use std::time::Duration;
 use std::{io, process::exit};
+use tokio::time::{Instant, MissedTickBehavior, interval_at};
 use wlctl::{
     app::App,
     cli,
@@ -36,7 +38,7 @@ async fn main() -> Result<()> {
 
     let backend = CrosstermBackend::new(io::stdout());
     let terminal = Terminal::new(backend)?;
-    let events = EventHandler::new(3_000);
+    let events = EventHandler::new();
     let mut tui = Tui::new(terminal, events);
     tui.init()?;
 
@@ -70,6 +72,14 @@ async fn main() -> Result<()> {
     // to the VPN import field so pastes elsewhere keep their default behavior.
     let mut bracketed_paste = false;
 
+    // Driving the refresh timer from this loop — rather than from a task
+    // feeding the event channel — means a refresh cannot be queued while one is
+    // already running, so a slow refresh simply delays the next one instead of
+    // building a backlog the UI then has to work through.
+    let refresh_interval = Duration::from_millis(3_000);
+    let mut refresh = interval_at(Instant::now() + refresh_interval, refresh_interval);
+    refresh.set_missed_tick_behavior(MissedTickBehavior::Delay);
+
     while app.running {
         tui.draw(&mut app)?;
 
@@ -83,11 +93,14 @@ async fn main() -> Result<()> {
             bracketed_paste = want_paste;
         }
 
-        match tui.events.next().await? {
+        let event = tokio::select! {
+            _ = refresh.tick() => Event::Tick,
+            received = tui.events.next() => received?,
+        };
+
+        match event {
             Event::Tick => {
-                let result = app.tick().await;
-                tui.events.mark_tick_handled();
-                if let Err(e) = result {
+                if let Err(e) = app.tick().await {
                     exit_error_message = Some(e);
                     break;
                 }
