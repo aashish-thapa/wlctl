@@ -358,8 +358,7 @@ Error: {}",
     }
 
     pub async fn tick(&mut self) -> Result<()> {
-        self.notifications.retain(|n| n.ttl > 0);
-        self.notifications.iter_mut().for_each(|n| n.ttl -= 1);
+        self.notifications.retain(|n| !n.is_expired());
 
         // One read of NetworkManager's object graph serves every refresh below,
         // so they all describe the same instant and cost one round trip between

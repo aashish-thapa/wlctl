@@ -1,3 +1,5 @@
+use std::time::{Duration, Instant};
+
 use anyhow::Result;
 use ratatui::{
     Frame,
@@ -10,11 +12,16 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::event::Event;
 
+/// How long a notification stays on screen.
+const VISIBLE_FOR: Duration = Duration::from_secs(3);
+
 #[derive(Debug, Clone)]
 pub struct Notification {
     pub message: String,
     pub level: NotificationLevel,
-    pub ttl: u16,
+    /// Deadline rather than a countdown, so how long a notification is shown
+    /// does not depend on how often the UI happens to refresh.
+    expires_at: Instant,
 }
 
 #[derive(Debug, Clone)]
@@ -25,6 +32,11 @@ pub enum NotificationLevel {
 }
 
 impl Notification {
+    /// Whether this notification has outlived its display time.
+    pub fn is_expired(&self) -> bool {
+        Instant::now() >= self.expires_at
+    }
+
     pub fn render(&self, index: usize, frame: &mut Frame) {
         let (color, title) = match self.level {
             NotificationLevel::Info => (Color::Green, "Info"),
@@ -70,7 +82,7 @@ impl Notification {
         let notif = Notification {
             message,
             level,
-            ttl: 3,
+            expires_at: Instant::now() + VISIBLE_FOR,
         };
 
         sender.send(Event::Notification(notif))?;
@@ -103,4 +115,25 @@ pub fn notification_rect(offset: u16, height: u16, width: u16, r: Rect) -> Rect 
             .as_ref(),
         )
         .split(popup_layout[1])[1]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn notification(expires_at: Instant) -> Notification {
+        Notification {
+            message: String::new(),
+            level: NotificationLevel::Info,
+            expires_at,
+        }
+    }
+
+    /// Expiry is a deadline, not a tick count, so the refresh interval cannot
+    /// stretch or shorten how long a notification is shown.
+    #[test]
+    fn expiry_depends_on_elapsed_time_only() {
+        assert!(!notification(Instant::now() + VISIBLE_FOR).is_expired());
+        assert!(notification(Instant::now()).is_expired());
+    }
 }
