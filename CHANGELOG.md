@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.10] - 2026-08-20
+
+### Added
+- `refresh_interval_ms` config option controlling how often the UI re-reads
+  NetworkManager (defaults to 1000, floored at 250)
+
+### Changed
+- Read NetworkManager state from a single ObjectManager snapshot per refresh
+  instead of one D-Bus round trip per object. Idle CPU drops sharply on
+  machines with many saved profiles — per-refresh D-Bus work measured at 8.6ms
+  before and ~1ms after
+- Cache saved WiFi profiles and re-read them only when NetworkManager reports a
+  new `VersionId`
+
+### Fixed
+- Notifications expire on elapsed time rather than refresh ticks, so their
+  lifetime no longer stretches when the refresh interval is slowed
+- Expired notifications are dropped before every draw, not only when a refresh
+  tick fires
+
+### Credits
+- Idle CPU investigation and the initial batching work by
+  [@Macavirus](https://github.com/Macavirus)
+
 ## [0.1.9] - 2026-06-28
 
 ### Added
