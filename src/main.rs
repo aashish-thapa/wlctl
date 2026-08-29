@@ -21,6 +21,8 @@ use wlctl::{
 #[tokio::main]
 async fn main() -> Result<()> {
     env_logger::builder()
+        .filter_level(log::LevelFilter::Warn)
+        .parse_default_env()
         .format_timestamp(None)
         .target(Target::Stderr)
         .init();
