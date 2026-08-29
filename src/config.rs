@@ -218,20 +218,65 @@ impl Config {
     }
 
     pub fn new() -> Self {
-        let conf_path = dirs::config_dir()
-            .unwrap()
-            .join("wlctl")
-            .join("config.toml");
+        let Some(conf_dir) = dirs::config_dir() else {
+            log::warn!("could not resolve the config directory, using defaults");
+            return parse_config("", std::path::Path::new("<no config directory>"));
+        };
 
-        let config = std::fs::read_to_string(conf_path).unwrap_or_default();
-        let app_config: Config = toml::from_str(&config).unwrap();
+        let conf_path = conf_dir.join("wlctl").join("config.toml");
 
-        app_config
+        let config = std::fs::read_to_string(&conf_path).unwrap_or_default();
+        parse_config(&config, &conf_path)
+    }
+}
+
+/// Parse config text, falling back to built-in defaults when the input is
+/// malformed. A typo in the user's config should produce a warning, never a
+/// panic on the main thread.
+fn parse_config(text: &str, source: &std::path::Path) -> Config {
+    match toml::from_str::<Config>(text) {
+        Ok(cfg) => cfg,
+        Err(e) => {
+            log::warn!("invalid config at {source:?}, using defaults: {e}");
+            // Every field carries #[serde(default)], so the empty document
+            // parses to a fully-defaulted Config. (Not Config::default():
+            // that delegates to Self::new(), which would re-read the file
+            // and re-warn — the empty-doc path is the non-recursive one.)
+            toml::from_str("").expect("empty config always parses to defaults")
+        }
     }
 }
 
 impl Default for Config {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_config;
+    use std::path::Path;
+
+    #[test]
+    fn malformed_config_falls_back_to_defaults() {
+        let cfg = parse_config("refresh_interval_ms = [bad", Path::new("test.toml"));
+        assert_eq!(cfg.refresh_interval_ms, 1_000);
+        assert_eq!(cfg.switch, 'r');
+    }
+
+    #[test]
+    fn partial_config_fills_remaining_fields() {
+        let cfg = parse_config("refresh_interval_ms = 500", Path::new("test.toml"));
+        assert_eq!(cfg.refresh_interval_ms, 500);
+        assert_eq!(cfg.switch, 'r');
+    }
+
+    #[test]
+    fn empty_config_parses_to_defaults() {
+        let cfg = parse_config("", Path::new("test.toml"));
+        assert_eq!(cfg.refresh_interval_ms, 1_000);
+        assert_eq!(cfg.switch, 'r');
+        assert!(!cfg.esc_quit);
     }
 }
