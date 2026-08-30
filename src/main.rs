@@ -21,8 +21,6 @@ use wlctl::{
 #[tokio::main]
 async fn main() -> Result<()> {
     env_logger::builder()
-        .filter_level(log::LevelFilter::Warn)
-        .parse_default_env()
         .format_timestamp(None)
         .target(Target::Stderr)
         .init();
@@ -35,7 +33,8 @@ async fn main() -> Result<()> {
 
     rfkill::check()?;
 
-    let config = Arc::new(Config::new());
+    let (config, config_error) = Config::load();
+    let config = Arc::new(config);
 
     let backend = CrosstermBackend::new(io::stdout());
     let terminal = Terminal::new(backend)?;
@@ -66,6 +65,14 @@ async fn main() -> Result<()> {
             exit(1);
         }
     };
+
+    if let Some(e) = config_error {
+        Notification::send(
+            format!("{e}\nUsing default settings."),
+            NotificationLevel::Warning,
+            &tui.events.sender,
+        )?;
+    }
 
     let mut exit_error_message = None;
 
