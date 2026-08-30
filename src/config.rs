@@ -126,8 +126,11 @@ fn default_station_start_scanning() -> char {
 pub struct KnownNetwork {
     #[serde(default = "default_station_remove_known_network")]
     pub remove: char,
+    #[serde(default = "default_station_toggle_autoconnect")]
     pub toggle_autoconnect: char,
+    #[serde(default = "default_station_show_all")]
     pub show_all: char,
+    #[serde(default = "default_station_share")]
     pub share: char,
     #[serde(default = "default_station_speed_test")]
     pub speed_test: char,
@@ -138,12 +141,12 @@ pub struct KnownNetwork {
 impl Default for KnownNetwork {
     fn default() -> Self {
         Self {
-            remove: 'd',
-            toggle_autoconnect: 't',
-            show_all: 'a',
-            share: 'p',
-            speed_test: 'S',
-            prefer: 'u',
+            remove: default_station_remove_known_network(),
+            toggle_autoconnect: default_station_toggle_autoconnect(),
+            show_all: default_station_show_all(),
+            share: default_station_share(),
+            speed_test: default_station_speed_test(),
+            prefer: default_station_prefer(),
         }
     }
 }
@@ -156,12 +159,25 @@ fn default_station_speed_test() -> char {
     'S'
 }
 
+fn default_station_toggle_autoconnect() -> char {
+    't'
+}
+
+fn default_station_show_all() -> char {
+    'a'
+}
+
+fn default_station_share() -> char {
+    'p'
+}
+
 fn default_station_remove_known_network() -> char {
     'd'
 }
 
 #[derive(Deserialize, Debug)]
 pub struct NewNetwork {
+    #[serde(default = "default_new_network_show_all")]
     pub show_all: char,
     #[serde(default = "default_connect_hidden")]
     pub connect_hidden: char,
@@ -172,11 +188,15 @@ pub struct NewNetwork {
 impl Default for NewNetwork {
     fn default() -> Self {
         Self {
-            show_all: 'a',
-            connect_hidden: 'h',
-            filter: '/',
+            show_all: default_new_network_show_all(),
+            connect_hidden: default_connect_hidden(),
+            filter: default_new_network_filter(),
         }
     }
+}
+
+fn default_new_network_show_all() -> char {
+    'a'
 }
 
 fn default_connect_hidden() -> char {
@@ -355,6 +375,26 @@ mod tests {
             defaults.station.start_scanning
         );
         assert_eq!(config.ap.start, defaults.ap.start);
+    }
+
+    /// A half-filled nested table has to merge with the defaults the way a
+    /// top-level field does. A field with no serde default is a *required*
+    /// field, and one missing key would discard the whole config.
+    #[test]
+    fn partial_nested_table_fills_remaining_fields() {
+        let (config, error) = parse("[station.known_network]\nremove = 'x'\n");
+        let defaults = Config::default();
+
+        assert!(error.is_none(), "partial table rejected: {error:?}");
+        assert_eq!(config.station.known_network.remove, 'x');
+        assert_eq!(
+            config.station.known_network.share,
+            defaults.station.known_network.share
+        );
+        assert_eq!(
+            config.station.new_network.show_all,
+            defaults.station.new_network.show_all
+        );
     }
 
     #[test]
